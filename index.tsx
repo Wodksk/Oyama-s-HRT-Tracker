@@ -25,6 +25,8 @@ type Lang = 'zh' | 'en' | 'ru';
 const TRANSLATIONS = {
     zh: {
         "app.title": "HRT 记录",
+        "nav.home": "概览",
+        "nav.history": "记录",
         "status.estimate": "当前估算浓度",
         "status.weight": "体重",
         "chart.title": "雌二醇浓度 (pg/mL)",
@@ -142,6 +144,8 @@ const TRANSLATIONS = {
     },
     en: {
         "app.title": "HRT Recorder",
+        "nav.home": "Overview",
+        "nav.history": "History",
         "status.estimate": "Current Estimate",
         "status.weight": "Weight",
         "chart.title": "E2 Concentration Graph (pg/mL)",
@@ -259,6 +263,8 @@ const TRANSLATIONS = {
     },
     ru: {
         "app.title": "HRT Recorder",
+        "nav.home": "Обзор",
+        "nav.history": "История",
         "status.estimate": "Текущая оценка",
         "status.weight": "Вес",
         "chart.title": "График концентрации E2 (пг/мл)",
@@ -1792,6 +1798,14 @@ const AppContent = () => {
     const [generatedPassword, setGeneratedPassword] = useState("");
     const [isPasswordDisplayOpen, setIsPasswordDisplayOpen] = useState(false);
     const [isPasswordInputOpen, setIsPasswordInputOpen] = useState(false);
+
+    const [currentView, setCurrentView] = useState<'home' | 'history'>('home');
+
+    useEffect(() => {
+        const shouldLock = isDrawerOpen || isExportModalOpen || isPasswordDisplayOpen || isPasswordInputOpen || isWeightModalOpen || isFormOpen || isQrModalOpen || isImportModalOpen;
+        document.body.style.overflow = shouldLock ? 'hidden' : '';
+        return () => { document.body.style.overflow = ''; };
+    }, [isDrawerOpen, isExportModalOpen, isPasswordDisplayOpen, isPasswordInputOpen, isWeightModalOpen, isFormOpen, isQrModalOpen, isImportModalOpen]);
     const [pendingImportText, setPendingImportText] = useState<string | null>(null);
 
     useEffect(() => { localStorage.setItem('hrt-events', JSON.stringify(events)); }, [events]);
@@ -1993,120 +2007,144 @@ const AppContent = () => {
         <div className="relative min-h-screen pb-32 max-w-lg mx-auto bg-gray-50 shadow-2xl overflow-hidden font-sans">
             <div className="transition duration-300" style={dimmedStyle}>
                 {/* Header */}
-                <header className="bg-white px-8 pt-12 pb-8 rounded-b-[2.5rem] shadow-xl shadow-gray-100 z-10 sticky top-0">
-                    <div className="flex justify-between items-start mb-6">
-                        <div>
-                            <h1 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">{t('status.estimate')}</h1>
-                            <div className="flex items-baseline gap-2">
-                                <span className="text-6xl font-black text-gray-900 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-700">
-                                    {currentLevel.toFixed(0)}
-                                </span>
-                                <span className="text-xl font-bold text-gray-400">pg/mL</span>
+                {currentView === 'home' && (
+                    <header className="bg-white px-8 pt-12 pb-8 rounded-b-[2.5rem] shadow-xl shadow-gray-100 z-10 sticky top-0">
+                        <div className="flex justify-between items-start mb-6">
+                            <div>
+                                <h1 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">{t('status.estimate')}</h1>
+                                <div className="flex items-baseline gap-2">
+                                    <span className="text-6xl font-black text-gray-900 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-700">
+                                        {currentLevel.toFixed(0)}
+                                    </span>
+                                    <span className="text-xl font-bold text-gray-400">pg/mL</span>
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-2 items-end">
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setIsDrawerOpen(true)}
+                                        className="p-2 bg-gray-50 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+                                        aria-label={t('drawer.title')}
+                                    >
+                                        <Menu size={20} />
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <div className="flex flex-col gap-2 items-end">
-                            <div className="flex gap-2">
-                                <button 
-                                    onClick={() => setIsDrawerOpen(true)}
-                                    className="p-2 bg-gray-50 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
-                                    aria-label={t('drawer.title')}
-                                >
-                                    <Menu size={20} />
-                                </button>
-                            </div>
+                        <div className="flex gap-4">
+                             <button onClick={() => setIsWeightModalOpen(true)} className="flex items-center gap-2 bg-gray-50 pl-3 pr-4 py-2 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-100 transition">
+                                <Settings size={16} className="text-gray-400" />
+                                {t('status.weight')}: {weight} kg
+                            </button>
                         </div>
-                    </div>
-                    <div className="flex gap-4">
-                         <button onClick={() => setIsWeightModalOpen(true)} className="flex items-center gap-2 bg-gray-50 pl-3 pr-4 py-2 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-100 transition">
-                            <Settings size={16} className="text-gray-400" />
-                            {t('status.weight')}: {weight} kg
-                        </button>
-                    </div>
-                </header>
+                    </header>
+                )}
 
                 <main className="px-6 py-8 space-y-8">
                     {/* Chart */}
-                    <ResultChart sim={simulation} />
+                    {currentView === 'home' && (
+                        <ResultChart sim={simulation} />
+                    )}
 
                     {/* Timeline */}
-                    <div className="space-y-6">
-                        <div className="flex items-center justify-between px-2">
-                            <h2 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
-                               <Activity size={20} className="text-pink-400" /> {t('timeline.title')}
-                            </h2>
-                            <button 
-                                onClick={handleAddEvent}
-                                className="bg-gray-900 text-white px-4 py-2 rounded-full shadow-lg shadow-gray-900/20 flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform"
-                            >
-                                <Plus size={16} />
-                                <span className="font-bold text-sm">{t('btn.add')}</span>
-                            </button>
-                        </div>
-
-                        {Object.keys(groupedEvents).length === 0 && (
-                            <div className="text-center py-12 text-gray-400 bg-white rounded-3xl border border-dashed border-gray-200">
-                               <p>{t('timeline.empty')}</p>
+                    {currentView === 'history' && (
+                        <div className="space-y-6 pt-8">
+                            <div className="flex items-center justify-between px-2">
+                                <h2 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
+                                   <Activity size={20} className="text-pink-400" /> {t('timeline.title')}
+                                </h2>
+                                <button 
+                                    onClick={handleAddEvent}
+                                    className="bg-gray-900 text-white px-4 py-2 rounded-full shadow-lg shadow-gray-900/20 flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform"
+                                >
+                                    <Plus size={16} />
+                                    <span className="font-bold text-sm">{t('btn.add')}</span>
+                                </button>
                             </div>
-                        )}
 
-                        {Object.entries(groupedEvents).map(([date, items]) => (
-                            <div key={date} className="relative">
-                                <div className="sticky top-0 bg-gray-50/95 backdrop-blur py-2 px-2 z-0 flex items-center gap-2 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-pink-200"></div>
-                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{date}</span>
+                            {Object.keys(groupedEvents).length === 0 && (
+                                <div className="text-center py-12 text-gray-400 bg-white rounded-3xl border border-dashed border-gray-200">
+                                   <p>{t('timeline.empty')}</p>
                                 </div>
-                                <div className="space-y-3">
-                                    {(items as DoseEvent[]).map(ev => (
-                                        <div 
-                                            key={ev.id} 
-                                            onClick={() => handleEditEvent(ev)}
-                                            className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-4 hover:shadow-md hover:border-pink-100 transition-all cursor-pointer group relative overflow-hidden"
-                                        >
-                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${ev.route === Route.injection ? 'bg-pink-50' : 'bg-gray-50'}`}>
-                                                {getRouteIcon(ev.route)}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <span className="font-bold text-gray-900 text-sm truncate">
-                                                        {ev.route === Route.patchRemove ? t('route.patchRemove') : t(`ester.${ev.ester}`)}
-                                                    </span>
-                                                    <span className="font-mono text-xs font-medium text-gray-400 bg-gray-50 px-2 py-1 rounded-md">
-                                                        {formatTime(new Date(ev.timeH * 3600000))}
-                                                    </span>
+                            )}
+
+                            {Object.entries(groupedEvents).map(([date, items]) => (
+                                <div key={date} className="relative">
+                                    <div className="sticky top-0 bg-gray-50/95 backdrop-blur py-2 px-2 z-0 flex items-center gap-2 mb-2">
+                                        <div className="w-2 h-2 rounded-full bg-pink-200"></div>
+                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{date}</span>
+                                    </div>
+                                    <div className="space-y-3">
+                                        {(items as DoseEvent[]).map(ev => (
+                                            <div 
+                                                key={ev.id} 
+                                                onClick={() => handleEditEvent(ev)}
+                                                className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-4 hover:shadow-md hover:border-pink-100 transition-all cursor-pointer group relative overflow-hidden"
+                                            >
+                                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${ev.route === Route.injection ? 'bg-pink-50' : 'bg-gray-50'}`}>
+                                                    {getRouteIcon(ev.route)}
                                                 </div>
-                                                <div className="text-xs text-gray-500 font-medium space-y-1">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="truncate">{t(`route.${ev.route}`).split('(')[0]}</span>
-                                                        {ev.extras[ExtraKey.releaseRateUGPerDay] && (
-                                                            <>
-                                                                <span className="text-gray-300">•</span>
-                                                                <span className="text-gray-700">{`${ev.extras[ExtraKey.releaseRateUGPerDay]} µg/d`}</span>
-                                                            </>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <span className="font-bold text-gray-900 text-sm truncate">
+                                                            {ev.route === Route.patchRemove ? t('route.patchRemove') : t(`ester.${ev.ester}`)}
+                                                        </span>
+                                                        <span className="font-mono text-xs font-medium text-gray-400 bg-gray-50 px-2 py-1 rounded-md">
+                                                            {formatTime(new Date(ev.timeH * 3600000))}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs text-gray-500 font-medium space-y-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="truncate">{t(`route.${ev.route}`).split('(')[0]}</span>
+                                                            {ev.extras[ExtraKey.releaseRateUGPerDay] && (
+                                                                <>
+                                                                    <span className="text-gray-300">•</span>
+                                                                    <span className="text-gray-700">{`${ev.extras[ExtraKey.releaseRateUGPerDay]} µg/d`}</span>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                        {ev.route !== Route.patchRemove && (
+                                                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-gray-700">
+                                                                <span>{`${t('timeline.dose_label')}: ${(getRawDoseMG(ev) ?? 0).toFixed(2)} mg`}</span>
+                                                                <span>{`${t('timeline.bio_label')}: ${getBioDoseMG(ev).toFixed(2)} mg`}</span>
+                                                            </div>
                                                         )}
                                                     </div>
-                                                    {ev.route !== Route.patchRemove && (
-                                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-gray-700">
-                                                            <span>{`${t('timeline.dose_label')}: ${(getRawDoseMG(ev) ?? 0).toFixed(2)} mg`}</span>
-                                                            <span>{`${t('timeline.bio_label')}: ${getBioDoseMG(ev).toFixed(2)} mg`}</span>
-                                                        </div>
-                                                    )}
                                                 </div>
+                                                
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteEvent(ev.id); }} 
+                                                    className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-white to-transparent flex items-center justify-end pr-4 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                >
+                                                    <Trash2 size={18} className="text-pink-400 hover:text-pink-500" />
+                                                </button>
                                             </div>
-                                            
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); handleDeleteEvent(ev.id); }} 
-                                                className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-white to-transparent flex items-center justify-end pr-4 opacity-0 group-hover:opacity-100 transition-opacity"
-                                            >
-                                                <Trash2 size={18} className="text-pink-400 hover:text-pink-500" />
-                                            </button>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
+                            ))}
+                        </div>
+                    )}
                 </main>
             </div>
+
+            {/* Bottom Navigation */}
+            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-4 flex justify-around items-center z-20 safe-area-pb max-w-lg mx-auto">
+                <button 
+                    onClick={() => setCurrentView('home')}
+                    className={`flex flex-col items-center gap-1 transition-colors ${currentView === 'home' ? 'text-pink-500' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                    <Activity size={24} />
+                    <span className="text-xs font-bold">{t('nav.home')}</span>
+                </button>
+                <button 
+                    onClick={() => setCurrentView('history')}
+                    className={`flex flex-col items-center gap-1 transition-colors ${currentView === 'history' ? 'text-pink-500' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                    <Calendar size={24} />
+                    <span className="text-xs font-bold">{t('nav.history')}</span>
+                </button>
+            </nav>
 
             <ExportModal
                 isOpen={isExportModalOpen}
@@ -2271,14 +2309,7 @@ const AppContent = () => {
                     </button>
                 </div>
 
-                <div className="p-6 border-t border-gray-100">
-                    <button
-                        onClick={() => setIsDrawerOpen(false)}
-                        className="w-full py-3 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition"
-                    >
-                        {t('drawer.close')}
-                    </button>
-                </div>
+
             </aside>
         </div>
     );
