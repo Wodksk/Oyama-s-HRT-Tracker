@@ -22,29 +22,14 @@ export enum ExtraKey {
     areaCM2 = "areaCM2",
     releaseRateUGPerDay = "releaseRateUGPerDay",
     sublingualTheta = "sublingualTheta",
-    sublingualTier = "sublingualTier",
-    gelSite = "gelSite"
+    sublingualTier = "sublingualTier"
 }
-
-export enum GelSite {
-    arm = "arm",
-    thigh = "thigh",
-    scrotal = "scrotal"
-}
-
-export const GEL_SITE_ORDER = ["arm", "thigh", "scrotal"] as const;
-
-export const GelSiteParams = {
-    [GelSite.arm]: 0.05,
-    [GelSite.thigh]: 0.05,
-    [GelSite.scrotal]: 0.40
-};
 
 export interface DoseEvent {
     id: string;
     route: Route;
     timeH: number; // Hours since 1970
-    doseMG: number; // Dose in mg (of the ester/compound), NOT E2-equivalent
+    doseMG: number; // E2 Equivalent
     ester: Ester;
     extras: Partial<Record<ExtraKey, number>>;
 }
@@ -60,7 +45,7 @@ export interface SimulationResult {
 export const CorePK = {
     vdPerKG: 2.0, // L/kg
     kClear: 0.41,
-    kClearInjection: 0.41, // Unified with kClear to ensure consistent AUC comparisons
+    kClearInjection: 0.041,
     depotK1Corr: 1.0
 };
 
@@ -79,7 +64,7 @@ export function getToE2Factor(ester: Ester): number {
 
 export const TwoPartDepotPK = {
     Frac_fast: { [Ester.EB]: 0.90, [Ester.EV]: 0.40, [Ester.EC]: 0.229164549, [Ester.EN]: 0.05, [Ester.E2]: 1.0 },
-    k1_fast: { [Ester.EB]: 0.144, [Ester.EV]: 0.0216, [Ester.EC]: 0.005035046, [Ester.EN]: 0.0010, [Ester.E2]: 0.5 }, // Added non-zero k1 for E2
+    k1_fast: { [Ester.EB]: 0.144, [Ester.EV]: 0.0216, [Ester.EC]: 0.005035046, [Ester.EN]: 0.0010, [Ester.E2]: 0 },
     k1_slow: { [Ester.EB]: 0.114, [Ester.EV]: 0.0138, [Ester.EC]: 0.004510574, [Ester.EN]: 0.0050, [Ester.E2]: 0 }
 };
 
@@ -98,7 +83,7 @@ export const OralPK = {
     kAbsSL: 1.8
 };
 
-// Define deterministic order for mapping integer tiers (0-3)   to keys
+// Define deterministic order for mapping integer tiers (0-3) to keys
 export const SL_TIER_ORDER = ["quick", "casual", "standard", "strict"] as const;
 
 export const SublingualTierParams = {
@@ -107,49 +92,6 @@ export const SublingualTierParams = {
     standard: { theta: 0.11, hold: 10 },
     strict: { theta: 0.18, hold: 15 }
 };
-
-export function getBioavailabilityMultiplier(
-    route: Route,
-    ester: Ester,
-    extras: Partial<Record<ExtraKey, number>> = {}
-): number {
-    const mwFactor = getToE2Factor(ester);
-    
-    switch (route) {
-        case Route.injection: {
-            const formation = InjectionPK.formationFraction[ester] ?? 0.08;
-            return formation * mwFactor;
-        }
-        case Route.oral:
-            return OralPK.bioavailability * mwFactor;
-        case Route.sublingual: {
-            let theta = 0.11;
-            if (extras[ExtraKey.sublingualTheta] !== undefined) {
-                const customTheta = extras[ExtraKey.sublingualTheta];
-                if (typeof customTheta === 'number' && Number.isFinite(customTheta)) {
-                    theta = Math.min(1, Math.max(0, customTheta));
-                }
-            } else if (extras[ExtraKey.sublingualTier] !== undefined) {
-                const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(extras[ExtraKey.sublingualTier]!)));
-                const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
-                theta = SublingualTierParams[tierKey]?.theta ?? 0.11;
-            }
-            return (theta + (1 - theta) * OralPK.bioavailability) * mwFactor;
-        }
-        case Route.gel: {
-            const siteIdx = Math.min(GEL_SITE_ORDER.length - 1, Math.max(0, Math.round(extras[ExtraKey.gelSite] ?? 0)));
-            // @ts-ignore
-            const siteKey = GEL_SITE_ORDER[siteIdx] || GelSite.arm;
-            const bio = GelSiteParams[siteKey] ?? 0.05;
-            return bio * mwFactor;
-        }
-        case Route.patchApply:
-            return 1.0 * mwFactor;
-        case Route.patchRemove:
-        default:
-            return 0;
-    }
-}
 
 // --- Math Models ---
 
@@ -166,9 +108,7 @@ interface PKParams {
 }
 
 function resolveParams(event: DoseEvent): PKParams {
-    // Unified k3 (Clearance) for all routes to ensure consistent AUC comparison
-    const k3 = CorePK.kClear; 
-    const toE2 = getToE2Factor(event.ester);
+    const k3 = event.route === Route.injection ? CorePK.kClearInjection : CorePK.kClear;
 
     switch (event.route) {
         case Route.injection: {
@@ -178,6 +118,7 @@ function resolveParams(event: DoseEvent): PKParams {
             const fracFast = TwoPartDepotPK.Frac_fast[event.ester] || 1.0;
 
             const form = InjectionPK.formationFraction[event.ester] || 0.08;
+            const toE2 = getToE2Factor(event.ester);
             const F = form * toE2;
 
             return { Frac_fast: fracFast, k1_fast, k1_slow, k2: EsterPK.k2[event.ester] || 0, k3, F, rateMGh: 0, F_fast: F, F_slow: F };
@@ -192,25 +133,19 @@ function resolveParams(event: DoseEvent): PKParams {
         }
         case Route.gel: {
             // Simplified Gel Logic from Swift file
-            const siteIdx = Math.min(GEL_SITE_ORDER.length - 1, Math.max(0, Math.round(event.extras[ExtraKey.gelSite] ?? 0)));
-            // @ts-ignore
-            const siteKey = GEL_SITE_ORDER[siteIdx] || GelSite.arm;
-            const bio = GelSiteParams[siteKey] ?? 0.05;
-            
-            return { Frac_fast: 1.0, k1_fast: 0.022, k1_slow: 0, k2: 0, k3, F: bio * toE2, rateMGh: 0, F_fast: bio * toE2, F_slow: bio * toE2 };
+            return { Frac_fast: 1.0, k1_fast: 0.022, k1_slow: 0, k2: 0, k3, F: 0.05, rateMGh: 0, F_fast: 0.05, F_slow: 0.05 };
         }
         case Route.oral: {
             const k1Value = event.ester === Ester.EV ? OralPK.kAbsEV : OralPK.kAbsE2;
             const k2Value = event.ester === Ester.EV ? (EsterPK.k2[Ester.EV] || 0) : 0;
-            const F = OralPK.bioavailability * toE2;
-            return { Frac_fast: 1.0, k1_fast: k1Value, k1_slow: 0, k2: k2Value, k3, F, rateMGh: 0, F_fast: F, F_slow: F };
+            return { Frac_fast: 1.0, k1_fast: k1Value, k1_slow: 0, k2: k2Value, k3, F: OralPK.bioavailability, rateMGh: 0, F_fast: OralPK.bioavailability, F_slow: OralPK.bioavailability };
         }
         case Route.sublingual: {
             let theta = 0.11;
             if (event.extras[ExtraKey.sublingualTheta] !== undefined) {
                 theta = Math.max(0, Math.min(1, event.extras[ExtraKey.sublingualTheta]!));
             } else if (event.extras[ExtraKey.sublingualTier] !== undefined) {
-                const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(event.extras[ExtraKey.sublingualTier]!)));
+                const tierIdx = Math.round(event.extras[ExtraKey.sublingualTier]!);
                 // Use explicit order to avoid object key order ambiguity
                 const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
                 theta = SublingualTierParams[tierKey]?.theta || 0.11;
@@ -226,10 +161,10 @@ function resolveParams(event: DoseEvent): PKParams {
                 k1_slow,
                 k2: k2Value,
                 k3,
-                F: 1.0 * toE2,
+                F: 1.0,
                 rateMGh: 0,
-                F_fast: 1.0 * toE2,
-                F_slow: OralPK.bioavailability * toE2
+                F_fast: 1.0,
+                F_slow: OralPK.bioavailability
             };
         }
         case Route.patchRemove:
@@ -277,12 +212,6 @@ class PrecomputedEventModel {
                     if (tau < 0) return 0;
                     const doseFast = dose * params.Frac_fast;
                     const doseSlow = dose * (1.0 - params.Frac_fast);
-                    
-                    // If k2 <= 0 (e.g. E2 injection), use 1-compartment model
-                    if (params.k2 <= 0) {
-                        return oneCompAmount(tau, doseFast, params) + oneCompAmount(tau, doseSlow, params);
-                    }
-
                     return _analytic3C(tau, doseFast, params.F, params.k1_fast, params.k2, params.k3) +
                            _analytic3C(tau, doseSlow, params.F, params.k1_slow, params.k2, params.k3);
                 };
@@ -420,85 +349,4 @@ export function interpolateConcentration(sim: SimulationResult, hour: number): n
     if (t1 === t0) return c0;
     const ratio = (hour - t0) / (t1 - t0);
     return c0 + (c1 - c0) * ratio;
-}
-
-// --- Encryption Utils ---
-
-async function generateKey(password: string, salt: Uint8Array) {
-    const enc = new TextEncoder();
-    const keyMaterial = await window.crypto.subtle.importKey(
-        "raw",
-        enc.encode(password),
-        { name: "PBKDF2" },
-        false,
-        ["deriveKey"]
-    );
-    return window.crypto.subtle.deriveKey(
-        {
-            name: "PBKDF2",
-            salt: salt as any,
-            iterations: 100000,
-            hash: "SHA-256"
-        },
-        keyMaterial,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt"]
-    );
-}
-
-function buffToBase64(buff: Uint8Array): string {
-    const bin = Array.from(buff, (byte) => String.fromCharCode(byte)).join("");
-    return btoa(bin);
-}
-
-function base64ToBuff(b64: string): Uint8Array {
-    const bin = atob(b64);
-    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
-}
-
-export async function encryptData(text: string): Promise<{ data: string, password: string }> {
-    const password = buffToBase64(window.crypto.getRandomValues(new Uint8Array(12)));
-    const salt = window.crypto.getRandomValues(new Uint8Array(16));
-    const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const key = await generateKey(password, salt);
-    const enc = new TextEncoder();
-    const encrypted = await window.crypto.subtle.encrypt(
-        { name: "AES-GCM", iv: iv as any },
-        key,
-        enc.encode(text)
-    );
-
-    const bundle = {
-        encrypted: true,
-        iv: buffToBase64(iv),
-        salt: buffToBase64(salt),
-        data: buffToBase64(new Uint8Array(encrypted))
-    };
-    return {
-        data: JSON.stringify(bundle),
-        password
-    };
-}
-
-export async function decryptData(jsonString: string, password: string): Promise<string | null> {
-    try {
-        const bundle = JSON.parse(jsonString);
-        if (!bundle.encrypted) return jsonString;
-
-        const salt = base64ToBuff(bundle.salt);
-        const iv = base64ToBuff(bundle.iv);
-        const data = base64ToBuff(bundle.data);
-
-        const key = await generateKey(password, salt);
-        const decrypted = await window.crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: iv as any },
-            key,
-            data as any
-        );
-        return new TextDecoder().decode(decrypted);
-    } catch (e) {
-        console.error(e);
-        return null;
-    }
 }

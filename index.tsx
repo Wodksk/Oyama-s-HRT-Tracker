@@ -912,6 +912,13 @@ const DoseFormModal = ({ isOpen, onClose, eventToEdit, onSave }: any) => {
             }
             finalDose = 0;
             extras[ExtraKey.releaseRateUGPerDay] = rateVal;
+        } else if (route === Route.patchApply && patchMode === "dose") {
+            const raw = parseFloat(rawDose);
+            if (!Number.isFinite(raw) || raw <= 0) {
+                showDialog('alert', nonPositiveMsg);
+                return;
+            }
+            finalDose = raw; // patch input is compound dose on patch
         } else if (route !== Route.patchRemove) {
             if (!Number.isFinite(e2Equivalent) || e2Equivalent <= 0) {
                 showDialog('alert', nonPositiveMsg);
@@ -1476,6 +1483,8 @@ const ResultChart = ({ sim }: { sim: SimulationResult | null }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [xDomain, setXDomain] = useState<[number, number] | null>(null);
     const [isZoomed, setIsZoomed] = useState(false);
+    const [zoomLevel, setZoomLevel] = useState(2);
+    const initializedRef = useRef(false);
 
     // Track pointers for touch interaction
     const lastTouchRef = useRef<{ dist: number; center: number } | null>(null);
@@ -1489,19 +1498,36 @@ const ResultChart = ({ sim }: { sim: SimulationResult | null }) => {
         }));
     }, [sim]);
 
-    const [anchorNow] = useState(() => new Date().getTime());
-
     const defaultDomain = useMemo(() => {
         if (data.length === 0) return null;
         const min = data[0].time;
         const max = data[data.length - 1].time;
-        const range = Math.max(max - min, 1);
-        const desiredWidth = range / 2; // 2x zoom => show half of the timeline
-        const minWidth = 24 * 3600 * 1000; // at least 1 day window
-        const width = Math.min(Math.max(desiredWidth, minWidth), range);
-        let start = anchorNow - width / 2;
-        let end = anchorNow + width / 2;
+        return [min, max] as [number, number];
+    }, [data]);
 
+    // Update domain when data loads; default to 2x view
+    useEffect(() => {
+        if (!initializedRef.current && data.length > 0) {
+            setZoomFactor(2);
+            initializedRef.current = true;
+            return;
+        }
+
+        if (!isZoomed && data.length > 0 && zoomLevel !== 2) {
+            setZoomFactor(2);
+        }
+    }, [data, isZoomed, zoomLevel]);
+
+    const setZoomFactor = (factor: number) => {
+        const now = new Date().getTime();
+        if (!data.length) return;
+        const min = data[0].time;
+        const max = data[data.length - 1].time;
+        const totalRange = Math.max(max - min, 1);
+        const minWidth = 24 * 3600 * 1000;
+        const width = Math.max(totalRange / Math.max(1, factor), minWidth);
+        let start = now - width / 2;
+        let end = now + width / 2;
         if (start < min) {
             start = min;
             end = Math.min(min + width, max);
@@ -1510,159 +1536,14 @@ const ResultChart = ({ sim }: { sim: SimulationResult | null }) => {
             end = max;
             start = Math.max(max - width, min);
         }
-
-        return [start, end] as [number, number];
-    }, [data, anchorNow]);
-
-    // Update domain when data loads, only if not zoomed
-    useEffect(() => {
-        if (!isZoomed && defaultDomain) {
-            setXDomain(defaultDomain);
-        }
-    }, [defaultDomain, isZoomed]);
-
-    // Setup event listeners for the container to handle wheel/touch events passively/actively
-    useEffect(() => {
-        const el = containerRef.current;
-        if (!el) return;
-
-        const handleWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            if (!xDomain) return;
-
-            const scale = e.deltaY > 0 ? 1.1 : 0.9;
-            const [min, max] = xDomain;
-            const domainWidth = max - min;
-            const rect = el.getBoundingClientRect();
-            
-            // Calculate mouse position ratio (0 to 1) relative to chart width
-            // Assuming standard padding in Recharts, but simple approximation works well for UX
-            const mouseX = e.clientX - rect.left;
-            const chartWidth = rect.width;
-            
-            // Recharts has some padding, let's approximate the drawing area (usually like 60px left, 20px right)
-            // A simple 0-1 ratio based on full width is usually "good enough" for center-zoom feels
-            const ratio = Math.max(0, Math.min(1, mouseX / chartWidth));
-            
-            const mouseTime = min + domainWidth * ratio;
-            
-            const MIN_ZOOM = 24 * 3600 * 1000; // 24 hours
-            // Calculate max zoom based on data range
-            const dataMin = data.length > 0 ? data[0].time : 0;
-            const dataMax = data.length > 0 ? data[data.length - 1].time : 0;
-            const MAX_ZOOM = Math.max(dataMax - dataMin, MIN_ZOOM);
-
-            let newWidth = domainWidth * scale;
-            if (newWidth < MIN_ZOOM) newWidth = MIN_ZOOM;
-            if (newWidth > MAX_ZOOM) newWidth = MAX_ZOOM;
-            
-            const effectiveScale = newWidth / domainWidth;
-            const newMin = mouseTime - (mouseTime - min) * effectiveScale;
-            const newMax = newMin + newWidth;
-
-            setXDomain([newMin, newMax]);
-            setIsZoomed(true);
-        };
-
-        el.addEventListener('wheel', handleWheel, { passive: false });
-        return () => el.removeEventListener('wheel', handleWheel);
-    }, [xDomain, data]);
-
-    // --- Touch & Drag Logic ---
-    
-    const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
-        // e.preventDefault(); // Don't prevent default here to allow click interactions unless moving
-        if ('touches' in e && e.touches.length === 2) {
-            // Pinch start
-            const t1 = e.touches[0];
-            const t2 = e.touches[1];
-            const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-            const center = (t1.clientX + t2.clientX) / 2;
-            lastTouchRef.current = { dist, center };
-        } else {
-            // Pan start (Touch or Mouse)
-            const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-            lastPanRef.current = clientX;
-        }
-    };
-
-    const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
-        if (!xDomain) return;
-        
-        // Handle Pinch Zoom
-        if ('touches' in e && e.touches.length === 2) {
-            e.preventDefault(); // Stop page scroll
-            const t1 = e.touches[0];
-            const t2 = e.touches[1];
-            const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-            const center = (t1.clientX + t2.clientX) / 2;
-            
-            if (lastTouchRef.current) {
-                const lastDist = lastTouchRef.current.dist;
-                const scale = lastDist / dist;
-                if (xDomain) {
-                    const [min, max] = xDomain;
-                    const width = max - min;
-                    
-                    // Zoom centered logic could be improved here, but simple center-screen zoom is robust
-                    const MIN_ZOOM = 24 * 3600 * 1000; // 24 hours
-                    // Calculate max zoom based on data range
-                    const dataMin = data.length > 0 ? data[0].time : 0;
-                    const dataMax = data.length > 0 ? data[data.length - 1].time : 0;
-                    const MAX_ZOOM = Math.max(dataMax - dataMin, MIN_ZOOM);
-
-                    let newWidth = width * scale;
-                    if (newWidth < MIN_ZOOM) newWidth = MIN_ZOOM;
-                    if (newWidth > MAX_ZOOM) newWidth = MAX_ZOOM;
-
-                    const centerTime = min + width * 0.5; // Zoom center of view
-                    
-                    const newMin = centerTime - newWidth / 2;
-                    const newMax = centerTime + newWidth / 2;
-                    
-                    setXDomain([newMin, newMax]);
-                    setIsZoomed(true);
-                }
-            }
-            lastTouchRef.current = { dist, center };
-            return;
-        }
-
-        // Handle Pan (1 finger or mouse drag)
-        const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-        
-        // Check if mouse is down (buttons === 1) for mouse events
-        if (!('touches' in e) && e.buttons !== 1) {
-            lastPanRef.current = null;
-            return;
-        }
-
-        if (lastPanRef.current !== null) {
-            // e.preventDefault(); // Only if we want to stop browser nav gestures
-            const deltaX = lastPanRef.current - clientX;
-            const rect = containerRef.current?.getBoundingClientRect();
-            if (rect && xDomain) {
-                const [min, max] = xDomain;
-                const width = max - min;
-                // Convert pixel delta to time delta
-                const timeDelta = (deltaX / rect.width) * width;
-                setXDomain([min + timeDelta, max + timeDelta]);
-                setIsZoomed(true);
-            }
-            lastPanRef.current = clientX;
-        }
-    };
-
-    const handleTouchEnd = () => {
-        lastTouchRef.current = null;
-        lastPanRef.current = null;
+        setXDomain([start, end]);
+        setZoomLevel(factor);
+        setIsZoomed(factor !== 2);
     };
 
     const resetZoom = () => {
-        if (defaultDomain) {
-            setXDomain(defaultDomain);
-            setIsZoomed(false);
-        }
+        setZoomFactor(2);
+        setIsZoomed(false);
     };
 
     // Compute total timeline and slider parameters for panning
@@ -1698,26 +1579,32 @@ const ResultChart = ({ sim }: { sim: SimulationResult | null }) => {
         <div className="bg-white p-6 rounded-3xl shadow-lg shadow-gray-100 border border-gray-100 relative overflow-hidden group">
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-sm font-bold text-gray-500 tracking-wider">{t('chart.title')}</h2>
-                {isZoomed && (
-                    <button 
-                        onClick={resetZoom}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-bold transition-all animate-in fade-in"
-                    >
-                        <RotateCcw size={12} /> {t('chart.reset')}
-                    </button>
-                )}
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 shadow-inner shadow-gray-100">
+                        {[2, 4, 6].map((factor) => (
+                            <button
+                                key={factor}
+                                onClick={() => setZoomFactor(factor)}
+                                className="px-3 py-1 text-xs font-bold text-gray-600 rounded-lg transition-all bg-white hover:bg-pink-50 hover:text-pink-500 hover:-translate-y-0.5 hover:shadow-md active:translate-y-0"
+                            >
+                                {factor}x
+                            </button>
+                        ))}
+                    </div>
+                    {isZoomed && (
+                        <button 
+                            onClick={resetZoom}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-bold transition-all animate-in fade-in hover:-translate-y-0.5 hover:shadow-md active:translate-y-0"
+                        >
+                            <RotateCcw size={12} /> {t('chart.reset')}
+                        </button>
+                    )}
+                </div>
             </div>
             
             <div 
                 ref={containerRef}
-                className="h-72 w-full touch-none cursor-move"
-                onMouseDown={handleTouchStart}
-                onMouseMove={handleTouchMove}
-                onMouseUp={handleTouchEnd}
-                onMouseLeave={handleTouchEnd}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
+                className="h-72 w-full touch-none cursor-default"
             >
                 <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
