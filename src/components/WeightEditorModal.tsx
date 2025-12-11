@@ -28,8 +28,8 @@ const WeightEditorModal = ({ isOpen, onClose, currentWeight, onSave }: any) => {
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end justify-center z-50 animate-in fade-in duration-200">
-            <div className="bg-white rounded-t-3xl shadow-md shadow-gray-900/10 w-full max-w-lg p-6 animate-in slide-in-from-bottom duration-300 safe-area-pb">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center z-50 animate-in fade-in duration-200">
+            <div className="bg-white rounded-t-3xl md:rounded-3xl shadow-md shadow-gray-900/10 w-full max-w-lg md:max-w-xl p-6 md:p-8 animate-in slide-in-from-bottom duration-300 safe-area-pb">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-xl font-semibold text-gray-900">{t('modal.weight.title')}</h3>
                 </div>

@@ -261,53 +261,53 @@ const AppContent = () => {
 
     return (
         <div className="h-screen w-full bg-white flex flex-col font-sans text-gray-900 select-none overflow-hidden">
-            <div className="flex-1 flex flex-col overflow-hidden w-full max-w-lg mx-auto bg-white shadow-xl shadow-gray-900/10">
+            <div className="flex-1 flex flex-col overflow-hidden w-full bg-white shadow-xl shadow-gray-900/10">
                 {/* Header */}
                 {currentView === 'home' && (
-                    <header className="relative px-4 pt-10 pb-6 rounded-b-[2.5rem]">
-                        <div className="relative bg-white border border-gray-100 rounded-3xl shadow-lg shadow-gray-100 px-5 py-6">
-                            <div className="flex justify-between items-start gap-3 mb-4">
+                    <header className="relative px-4 md:px-8 pt-10 pb-6 rounded-b-[2.5rem]">
+                        <div className="relative bg-white border border-gray-100 rounded-3xl shadow-lg shadow-gray-100 px-5 md:px-8 py-6 md:py-8">
+                            <div className="flex justify-between items-start gap-3 mb-4 md:mb-6">
                                 <div>
-                                    <h1 className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 text-[11px] font-semibold text-gray-600 tracking-tight border border-gray-100 mb-1">
+                                    <h1 className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 text-[11px] md:text-xs font-semibold text-gray-600 tracking-tight border border-gray-100 mb-1">
                                         {t('status.estimate')}
                                     </h1>
                                     <div className="flex items-end gap-2">
-                                        <span className="text-6xl font-black text-gray-900 tracking-tighter">
+                                        <span className="text-6xl md:text-7xl lg:text-8xl font-black text-gray-900 tracking-tighter">
                                             {currentLevel.toFixed(0)}
                                         </span>
-                                        <span className="text-lg font-bold text-gray-400">pg/mL</span>
+                                        <span className="text-lg md:text-xl lg:text-2xl font-bold text-gray-400">pg/mL</span>
                                     </div>
                                 </div>
                                 <div className="text-right text-xs font-medium text-gray-400 leading-tight">
                                     <div className="px-3 py-1 rounded-full bg-gray-50 text-gray-600 border border-gray-100 inline-flex items-center gap-2">
                                         <Calendar size={14} className="text-pink-400" />
-                                        <span>{formatDate(currentTime, lang)}</span>
+                                        <span className="text-xs md:text-sm">{formatDate(currentTime, lang)}</span>
                                     </div>
-                                    <div className="mt-2 text-[11px] font-bold text-gray-500">
+                                    <div className="mt-2 text-[11px] md:text-xs font-bold text-gray-500">
                                         {formatTime(currentTime)}
                                     </div>
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="flex items-center gap-3 p-3 rounded-2xl bg-gray-50/80 border border-gray-100 shadow-sm">
-                                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-inner">
-                                        <Activity size={18} className="text-pink-400" />
+                            <div className="grid grid-cols-2 md:grid-cols-2 gap-3 md:gap-4">
+                                <div className="flex items-center gap-3 md:gap-4 p-3 md:p-4 rounded-2xl bg-gray-50/80 border border-gray-100 shadow-sm">
+                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-white flex items-center justify-center shadow-inner">
+                                        <Activity size={18} className="text-pink-400 md:w-5 md:h-5" />
                                     </div>
                                     <div className="leading-tight">
-                                        <p className="text-[11px] font-semibold text-gray-500">{t('timeline.title')}</p>
-                                        <p className="text-lg font-bold text-gray-900">{events.length || 0}</p>
+                                        <p className="text-[11px] md:text-xs font-semibold text-gray-500">{t('timeline.title')}</p>
+                                        <p className="text-lg md:text-xl lg:text-2xl font-bold text-gray-900">{events.length || 0}</p>
                                     </div>
                                 </div>
-                                <button 
-                                    onClick={() => setIsWeightModalOpen(true)} 
-                                    className="flex items-center gap-3 p-3 rounded-2xl bg-gray-50 border border-gray-100 shadow-sm hover:shadow-md transition"
+                                <button
+                                    onClick={() => setIsWeightModalOpen(true)}
+                                    className="flex items-center gap-3 md:gap-4 p-3 md:p-4 rounded-2xl bg-gray-50 border border-gray-100 shadow-sm hover:shadow-md transition"
                                 >
-                                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-inner">
-                                        <Settings size={18} className="text-gray-500" />
+                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-white flex items-center justify-center shadow-inner">
+                                        <Settings size={18} className="text-gray-500 md:w-5 md:h-5" />
                                     </div>
                                     <div className="text-left leading-tight">
-                                        <p className="text-[11px] font-semibold text-gray-500">{t('status.weight')}</p>
-                                        <p className="text-lg font-bold text-gray-900">{weight} kg</p>
+                                        <p className="text-[11px] md:text-xs font-semibold text-gray-500">{t('status.weight')}</p>
+                                        <p className="text-lg md:text-xl lg:text-2xl font-bold text-gray-900">{weight} kg</p>
                                     </div>
                                 </button>
                             </div>
@@ -397,7 +397,7 @@ const AppContent = () => {
                             ))}
                             
                             {/* Floating action button above bottom nav */}
-                            <div className="fixed left-1/2 bottom-28 -translate-x-1/2 z-30 w-full max-w-xs px-4 pointer-events-none">
+                            <div className="fixed left-1/2 bottom-28 -translate-x-1/2 z-30 w-full max-w-md px-4 pointer-events-none">
                                 <button
                                     onClick={handleAddEvent}
                                     className="pointer-events-auto w-full bg-gray-900 text-white px-4 py-3 rounded-full flex items-center justify-center gap-2 shadow-lg shadow-gray-300/60 hover:translate-y-[-2px] active:translate-y-0 transition-transform"
@@ -529,7 +529,7 @@ const AppContent = () => {
 
                 {/* Bottom Navigation - Glassmorphism capsule style */}
                 <nav className="px-4 pb-4 pt-2 bg-transparent z-20 safe-area-pb shrink-0">
-                    <div className="w-full max-w-lg mx-auto bg-white/70 backdrop-blur-lg border border-white/40 rounded-3xl px-3 py-3 flex items-center justify-between gap-2">
+                    <div className="w-full bg-white/70 backdrop-blur-lg border border-white/40 rounded-3xl px-3 py-3 flex items-center justify-between gap-2">
                         <button
                             onClick={() => setCurrentView('home')}
                             className={`flex-1 flex flex-col items-center gap-1 rounded-2xl py-2 transition-all border-2 ${

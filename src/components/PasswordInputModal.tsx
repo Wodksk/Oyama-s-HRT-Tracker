@@ -12,8 +12,8 @@ const PasswordInputModal = ({ isOpen, onClose, onConfirm }: { isOpen: boolean, o
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end justify-center z-[60] animate-in fade-in duration-200">
-            <div className="bg-white rounded-t-3xl shadow-md shadow-gray-900/10 w-full max-w-lg p-6 animate-in slide-in-from-bottom duration-300 safe-area-pb">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center z-[60] animate-in fade-in duration-200">
+            <div className="bg-white rounded-t-3xl md:rounded-3xl shadow-md shadow-gray-900/10 w-full max-w-lg md:max-w-xl p-6 md:p-8 animate-in slide-in-from-bottom duration-300 safe-area-pb">
                 <h3 className="text-xl font-semibold text-gray-900 mb-2 text-center">{t('import.password_title')}</h3>
                 <p className="text-sm text-gray-500 mb-6 text-center">{t('import.password_desc')}</p>
                 

@@ -15,8 +15,10 @@
       {
         "label": "main",
         "title": "Oyama's HRT Tracker",
-        "width": 420,
-        "height": 900,
+        "width": 1000,
+        "height": 800,
+        "minWidth": 420,
+        "minHeight": 700,
         "resizable": true,
         "fullscreen": false
       }

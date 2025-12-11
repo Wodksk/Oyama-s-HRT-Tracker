@@ -135,51 +135,48 @@ const ResultChart = ({ sim, events, onPointClick }: { sim: SimulationResult | nu
     };
 
     if (!sim || sim.timeH.length === 0) return (
-        <div className="h-72 flex flex-col items-center justify-center text-gray-400 bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
+        <div className="h-72 md:h-96 flex flex-col items-center justify-center text-gray-400 bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
             <Activity className="w-12 h-12 mb-4 text-gray-200" strokeWidth={1.5} />
             <p className="text-sm font-medium">{t('timeline.empty')}</p>
         </div>
     );
-    
+
     return (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm relative overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center px-4 py-3 border-b border-gray-100">
-                <h2 className="text-sm font-semibold text-gray-800 tracking-tight flex items-center gap-2" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif' }}>
-                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-pink-50 border border-pink-100">
-                        <Activity size={16} className="text-[#f6c4d7]" />
+            <div className="flex justify-between items-center px-4 md:px-6 py-3 md:py-4 border-b border-gray-100">
+                <h2 className="text-sm md:text-base font-semibold text-gray-800 tracking-tight flex items-center gap-2" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif' }}>
+                    <span className="inline-flex items-center justify-center w-8 h-8 md:w-10 md:h-10 rounded-xl bg-pink-50 border border-pink-100">
+                        <Activity size={16} className="text-[#f6c4d7] md:w-5 md:h-5" />
                     </span>
                     {t('chart.title')}
                 </h2>
-                
+
                 <div className="flex bg-gray-50 rounded-xl p-1 gap-1 border border-gray-100">
                     <button
                         onClick={() => zoomToDuration(30)}
-                        className="px-3 py-1.5 text-xs font-bold text-gray-600 rounded-lg hover:bg-white transition-all"
-                    >
+                        className="px-3 py-1.5 text-xs md:text-sm font-bold text-gray-600 rounded-lg hover:bg-white transition-all">
                         1M
                     </button>
                     <button
                         onClick={() => zoomToDuration(7)}
-                        className="px-3 py-1.5 text-xs font-bold text-gray-600 rounded-lg hover:bg-white transition-all"
-                    >
+                        className="px-3 py-1.5 text-xs md:text-sm font-bold text-gray-600 rounded-lg hover:bg-white transition-all">
                         1W
                     </button>
                     <div className="w-px h-4 bg-gray-200 self-center mx-1"></div>
-                    <button 
+                    <button
                         onClick={() => {
                             setXDomain(clampDomain([minTime, maxTime]));
                         }}
                         className="p-1.5 text-gray-600 rounded-lg hover:bg-white transition-all"
                     >
-                        <RotateCcw size={14} />
+                        <RotateCcw size={14} className="md:w-4 md:h-4" />
                     </button>
                 </div>
             </div>
-            
-            <div 
+
+            <div
                 ref={containerRef}
-                className="h-64 w-full touch-none relative select-none px-2 pb-2"
-            >
+                className="h-64 md:h-80 lg:h-96 w-full touch-none relative select-none px-2 pb-2">
                 <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart margin={{ top: 12, right: 8, bottom: 0, left: -12 }}>
                         <defs>
