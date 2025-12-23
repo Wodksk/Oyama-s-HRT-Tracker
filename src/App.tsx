@@ -574,11 +574,6 @@ const AppContent = () => {
                                             <FlaskConical size={22} className="text-teal-500" /> {t('lab.title')}
                                         </h2>
                                         <div className="flex items-center gap-3">
-                                            {Math.abs(calibrationFactor - 1) > 0.001 && (
-                                                <span className="px-3 py-1 rounded-lg bg-teal-50 text-teal-700 text-xs font-bold border border-teal-100">
-                                                    ×{calibrationFactor.toFixed(2)}
-                                                </span>
-                                            )}
                                             <button
                                                 onClick={handleAddLabResult}
                                                 className="inline-flex items-center justify-center gap-2 px-3.5 py-2 h-11 rounded-xl bg-gray-900 text-white text-sm font-bold shadow-sm hover:shadow-md transition"
@@ -602,33 +597,26 @@ const AppContent = () => {
                                             .map(res => {
                                                 const d = new Date(res.timeH * 3600000);
                                                 return (
-                                                    <div key={res.id} className="px-4 py-3 flex items-center justify-between hover:bg-gray-50">
-                                                        <div onClick={() => handleEditLabResult(res)} className="flex items-center gap-3 cursor-pointer">
-                                                            <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-100 flex items-center justify-center text-sm font-bold text-teal-700">
-                                                                {res.unit === 'pmol/l' ? 'pmol' : 'pg'}
-                                                            </div>
-                                                            <div className="leading-tight">
-                                                                <p className="text-sm font-bold text-gray-900">
-                                                                    {res.concValue} {res.unit}
-                                                                </p>
-                                                                <p className="text-[11px] text-gray-500">
-                                                                    {formatDate(d, lang)} · {formatTime(d)}
-                                                                </p>
-                                                            </div>
+                                                    <div 
+                                                        key={res.id} 
+                                                        className="p-4 flex items-center gap-4 hover:bg-gray-50 transition-all cursor-pointer group relative"
+                                                        onClick={() => handleEditLabResult(res)}
+                                                    >
+                                                        <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 bg-teal-50 border border-teal-100">
+                                                            <FlaskConical className="text-teal-500" size={18} />
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <button
-                                                                onClick={() => handleEditLabResult(res)}
-                                                                className="px-3 py-1 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-100"
-                                                            >
-                                                                {t('btn.edit')}
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDeleteLabResult(res.id)}
-                                                                className="px-3 py-1 rounded-lg text-xs font-bold text-red-500 hover:bg-red-50"
-                                                            >
-                                                                {t('btn.cancel')}
-                                                            </button>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center justify-between mb-1">
+                                                                <span className="font-bold text-gray-900 text-sm truncate">
+                                                                    {res.concValue} {res.unit}
+                                                                </span>
+                                                                <span className="font-mono text-[11px] font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded-md border border-gray-100">
+                                                                    {formatTime(d)}
+                                                                </span>
+                                                            </div>
+                                                            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                                                                {formatDate(d, lang)}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 );

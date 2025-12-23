@@ -72,14 +72,32 @@ export function convertToPgMl(val: number, unit: 'pg/ml' | 'pmol/l'): number {
 export function calculateCalibrationFactor(sim: SimulationResult, results: LabResult[]): number {
     if (results.length === 0 || !sim) return 1.0;
 
+    const getNearestConc = (timeH: number): number | null => {
+        if (!sim.timeH.length) return null;
+        // binary search for nearest index
+        let low = 0;
+        let high = sim.timeH.length - 1;
+        while (high - low > 1) {
+            const mid = Math.floor((low + high) / 2);
+            if (sim.timeH[mid] === timeH) return sim.concPGmL[mid];
+            if (sim.timeH[mid] < timeH) low = mid;
+            else high = mid;
+        }
+        const idx = Math.abs(sim.timeH[high] - timeH) < Math.abs(sim.timeH[low] - timeH) ? high : low;
+        return sim.concPGmL[idx];
+    };
+
     let numerator = 0;
     let denominator = 0;
 
     for (const res of results) {
         const obs = convertToPgMl(res.concValue, res.unit);
-        const pred = interpolateConcentration(sim, res.timeH);
+        let pred = interpolateConcentration(sim, res.timeH);
+        if (pred === null || Number.isNaN(pred)) {
+            pred = getNearestConc(res.timeH);
+        }
 
-        if (pred !== null && pred > 1.0) { // Ignore very low predicted values to avoid noise amplification
+        if (pred !== null && pred > 0.01) { // ignore near-zero to avoid noise
             numerator += pred * obs;
             denominator += pred * pred;
         }

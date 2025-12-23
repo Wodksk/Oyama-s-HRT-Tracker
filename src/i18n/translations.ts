@@ -178,7 +178,7 @@ export const TRANSLATIONS_BASE = {
         "drawer.disclaimer": "免责声明",
         "drawer.disclaimer_desc": "关于医学信息的重要声明。",
 
-        "lab.title": "实验室检查记录",
+        "lab.title": "检查记录",
         "lab.add_title": "添加检查结果",
         "lab.edit_title": "编辑检查结果",
         "lab.date": "检查时间",
