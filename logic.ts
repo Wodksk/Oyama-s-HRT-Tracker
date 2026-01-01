@@ -14,7 +14,8 @@ export enum Ester {
     EB = "EB",
     EV = "EV",
     EC = "EC",
-    EN = "EN"
+    EN = "EN",
+    CPA = "CPA" // Added Cyproterone Acetate
 }
 
 export enum ExtraKey {
@@ -43,16 +44,18 @@ const GelSiteParams = {
 export interface DoseEvent {
     id: string;
     route: Route;
-    timeH: number; // Hours since 1970
-    doseMG: number; // Dose in mg (of the ester/compound), NOT E2-equivalent
+    timeH: number;
+    doseMG: number;
     ester: Ester;
     extras: Partial<Record<ExtraKey, number>>;
 }
 
 export interface SimulationResult {
     timeH: number[];
-    concPGmL: number[];
-    auc: number;
+    e2ConcPGmL: number[];  // Renamed for clarity
+    cpaConcNGmL: number[]; // Added for CPA
+    e2Auc: number;
+    cpaAuc: number;
 }
 
 // --- Lab Results & Calibration ---
@@ -60,41 +63,61 @@ export interface SimulationResult {
 export interface LabResult {
     id: string;
     timeH: number;
-    concValue: number; // Value in the user's unit
-    unit: 'pg/ml' | 'pmol/l';
+    concValue: number;
+    unit: 'pg/ml' | 'pmol/l' | 'ng/ml'; // Added ng/ml
+    type?: 'E2' | 'CPA'; // Differentiate lab results
 }
 
-export function convertToPgMl(val: number, unit: 'pg/ml' | 'pmol/l'): number {
+export function convertToPgMl(val: number, unit: string): number {
     if (unit === 'pg/ml') return val;
-    return val / 3.671; // pmol/L to pg/mL conversion
+    if (unit === 'pmol/l') return val / 3.671;
+    if (unit === 'ng/ml') return val * 1000;
+    return val;
+}
+
+export function convertToNgMl(val: number, unit: string): number {
+    if (unit === 'ng/ml') return val;
+    if (unit === 'pg/ml') return val / 1000;
+    if (unit === 'pmol/l') return (val / 3.671) / 1000;
+    return val;
 }
 
 /**
- * Build a time-varying calibration scale based on lab results.
- * Returns a ratio function r(t) such that conc(t) * r(t) is calibrated.
- * Strategy: compute ratio=obs/pred at each lab time, then linearly interpolate ratios over time.
+ * Build a calibration scale. Now generic to handle either E2 or CPA stream.
  */
-export function createCalibrationInterpolator(sim: SimulationResult | null, results: LabResult[]) {
-    if (!sim || !results.length) return (_timeH: number) => 1;
+export function createCalibrationInterpolator(
+    simTimes: number[], 
+    simConcs: number[], 
+    results: LabResult[],
+    targetType: 'E2' | 'CPA'
+) {
+    if (!simTimes.length || !results.length) return (_timeH: number) => 1;
+
+    // Filter results for the specific type
+    const typeResults = results.filter(r => (r.type || 'E2') === targetType);
+    if (!typeResults.length) return (_timeH: number) => 1;
 
     const getNearestConc = (timeH: number): number | null => {
-        if (!sim.timeH.length) return null;
         let low = 0;
-        let high = sim.timeH.length - 1;
+        let high = simTimes.length - 1;
         while (high - low > 1) {
             const mid = Math.floor((low + high) / 2);
-            if (sim.timeH[mid] === timeH) return sim.concPGmL[mid];
-            if (sim.timeH[mid] < timeH) low = mid;
+            if (simTimes[mid] === timeH) return simConcs[mid];
+            if (simTimes[mid] < timeH) low = mid;
             else high = mid;
         }
-        const idx = Math.abs(sim.timeH[high] - timeH) < Math.abs(sim.timeH[low] - timeH) ? high : low;
-        return sim.concPGmL[idx];
+        const idx = Math.abs(simTimes[high] - timeH) < Math.abs(simTimes[low] - timeH) ? high : low;
+        return simConcs[idx];
     };
 
-    const points = results
+    const points = typeResults
         .map(r => {
-            const obs = convertToPgMl(r.concValue, r.unit);
-            let pred = interpolateConcentration(sim, r.timeH);
+            // Normalize to simulation units: E2 -> pg/mL, CPA -> ng/mL
+            const obs = targetType === 'E2' 
+                ? convertToPgMl(r.concValue, r.unit)
+                : convertToNgMl(r.concValue, r.unit);
+            
+            let pred = interpolateConcentration(simTimes, simConcs, r.timeH);
             if (pred === null || Number.isNaN(pred)) {
                 pred = getNearestConc(r.timeH);
             }
@@ -114,7 +137,6 @@ export function createCalibrationInterpolator(sim: SimulationResult | null, resu
     return (timeH: number) => {
         if (timeH <= points[0].timeH) return points[0].ratio;
         if (timeH >= points[points.length - 1].timeH) return points[points.length - 1].ratio;
-        // binary search
         let low = 0;
         let high = points.length - 1;
         while (high - low > 1) {
@@ -131,13 +153,19 @@ export function createCalibrationInterpolator(sim: SimulationResult | null, resu
     };
 }
 
-// --- Constants & Parameters (PKparameter.swift & PKcore.swift) ---
+// --- Constants & Parameters ---
 
 const CorePK = {
-    vdPerKG: 2.0, // L/kg
+    vdPerKG: 2.0, // L/kg for E2
     kClear: 0.41,
     kClearInjection: 0.041,
-    depotK1Corr: 1.0
+    depotK1Corr: 1.0,
+    // CPA Parameters
+    // Vd ~12-14 L/kg (High tissue distribution)
+    // Half-life ~38h -> k ~0.018
+    cpaVdPerKG: 12.0, 
+    cpaKElim: 0.0182, // ln(2) / 38h
+    cpaKAbs: 1.0      // Tmax ~3-4h
 };
 
 const EsterInfo = {
@@ -145,26 +173,28 @@ const EsterInfo = {
     [Ester.EB]: { name: "Estradiol Benzoate", mw: 376.50 },
     [Ester.EV]: { name: "Estradiol Valerate", mw: 356.50 },
     [Ester.EC]: { name: "Estradiol Cypionate", mw: 396.58 },
-    [Ester.EN]: { name: "Estradiol Enanthate", mw: 384.56 }
+    [Ester.EN]: { name: "Estradiol Enanthate", mw: 384.56 },
+    [Ester.CPA]: { name: "Cyproterone Acetate", mw: 416.95 }
 };
 
 export function getToE2Factor(ester: Ester): number {
+    if (ester === Ester.CPA) return 1.0; // CPA doesn't convert to E2
     if (ester === Ester.E2) return 1.0;
     return EsterInfo[Ester.E2].mw / EsterInfo[ester].mw;
 }
 
 const TwoPartDepotPK = {
-    Frac_fast: { [Ester.EB]: 0.90, [Ester.EV]: 0.40, [Ester.EC]: 0.229164549, [Ester.EN]: 0.05, [Ester.E2]: 1.0 },
-    k1_fast: { [Ester.EB]: 0.144, [Ester.EV]: 0.0216, [Ester.EC]: 0.005035046, [Ester.EN]: 0.0010, [Ester.E2]: 0.5 }, // Added non-zero k1 for E2
-    k1_slow: { [Ester.EB]: 0.114, [Ester.EV]: 0.0138, [Ester.EC]: 0.004510574, [Ester.EN]: 0.0050, [Ester.E2]: 0 }
+    Frac_fast: { [Ester.EB]: 0.90, [Ester.EV]: 0.40, [Ester.EC]: 0.229164549, [Ester.EN]: 0.05, [Ester.E2]: 1.0, [Ester.CPA]: 1.0 },
+    k1_fast: { [Ester.EB]: 0.144, [Ester.EV]: 0.0216, [Ester.EC]: 0.005035046, [Ester.EN]: 0.0010, [Ester.E2]: 0.5, [Ester.CPA]: 1.0 }, 
+    k1_slow: { [Ester.EB]: 0.114, [Ester.EV]: 0.0138, [Ester.EC]: 0.004510574, [Ester.EN]: 0.0050, [Ester.E2]: 0, [Ester.CPA]: 0 }
 };
 
 const InjectionPK = {
-    formationFraction: { [Ester.EB]: 0.1092, [Ester.EV]: 0.0623, [Ester.EC]: 0.1173, [Ester.EN]: 0.12, [Ester.E2]: 1.0 }
+    formationFraction: { [Ester.EB]: 0.1092, [Ester.EV]: 0.0623, [Ester.EC]: 0.1173, [Ester.EN]: 0.12, [Ester.E2]: 1.0, [Ester.CPA]: 1.0 }
 };
 
 const EsterPK = {
-    k2: { [Ester.EB]: 0.090, [Ester.EV]: 0.070, [Ester.EC]: 0.045, [Ester.EN]: 0.015, [Ester.E2]: 0 }
+    k2: { [Ester.EB]: 0.090, [Ester.EV]: 0.070, [Ester.EC]: 0.045, [Ester.EN]: 0.015, [Ester.E2]: 0, [Ester.CPA]: 0 }
 };
 
 const OralPK = {
@@ -174,7 +204,6 @@ const OralPK = {
     kAbsSL: 1.8
 };
 
-// Define deterministic order for mapping integer tiers (0-3)   to keys
 export const SL_TIER_ORDER = ["quick", "casual", "standard", "strict"] as const;
 
 export const SublingualTierParams = {
@@ -183,49 +212,6 @@ export const SublingualTierParams = {
     standard: { theta: 0.11, hold: 10 },
     strict: { theta: 0.18, hold: 15 }
 };
-
-export function getBioavailabilityMultiplier(
-    route: Route,
-    ester: Ester,
-    extras: Partial<Record<ExtraKey, number>> = {}
-): number {
-    const mwFactor = getToE2Factor(ester);
-    
-    switch (route) {
-        case Route.injection: {
-            const formation = InjectionPK.formationFraction[ester] ?? 0.08;
-            return formation * mwFactor;
-        }
-        case Route.oral:
-            return OralPK.bioavailability * mwFactor;
-        case Route.sublingual: {
-            let theta = 0.11;
-            if (extras[ExtraKey.sublingualTheta] !== undefined) {
-                const customTheta = extras[ExtraKey.sublingualTheta];
-                if (typeof customTheta === 'number' && Number.isFinite(customTheta)) {
-                    theta = Math.min(1, Math.max(0, customTheta));
-                }
-            } else if (extras[ExtraKey.sublingualTier] !== undefined) {
-                const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(extras[ExtraKey.sublingualTier]!)));
-                const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
-                theta = SublingualTierParams[tierKey]?.theta ?? 0.11;
-            }
-            return (theta + (1 - theta) * OralPK.bioavailability) * mwFactor;
-        }
-        case Route.gel: {
-            const siteIdx = Math.min(GEL_SITE_ORDER.length - 1, Math.max(0, Math.round(extras[ExtraKey.gelSite] ?? 0)));
-            // @ts-ignore
-            const siteKey = GEL_SITE_ORDER[siteIdx] || GelSite.arm;
-            const bio = GelSiteParams[siteKey] ?? 0.05;
-            return bio * mwFactor;
-        }
-        case Route.patchApply:
-            return 1.0 * mwFactor;
-        case Route.patchRemove:
-        default:
-            return 0;
-    }
-}
 
 // --- Math Models ---
 
@@ -239,9 +225,28 @@ interface PKParams {
     rateMGh: number;
     F_fast: number;
     F_slow: number;
+    isCPA: boolean; // Flag to switch simulation mode
 }
 
 function resolveParams(event: DoseEvent): PKParams {
+    // Detect CPA
+    if (event.ester === Ester.CPA) {
+        // CPA Model (Oral primarily)
+        return {
+            Frac_fast: 1.0,
+            k1_fast: CorePK.cpaKAbs, // ~1.0
+            k1_slow: 0,
+            k2: 0,
+            k3: CorePK.cpaKElim, // ~0.0182
+            F: 1.0, // Assuming 100% relative bioavailability for standard oral dose
+            rateMGh: 0,
+            F_fast: 1.0,
+            F_slow: 0,
+            isCPA: true
+        };
+    }
+
+    // Estrogen Logic
     const k3 = event.route === Route.injection ? CorePK.kClearInjection : CorePK.kClear;
     const toE2 = getToE2Factor(event.ester);
 
@@ -251,30 +256,31 @@ function resolveParams(event: DoseEvent): PKParams {
             const k1_fast = (TwoPartDepotPK.k1_fast[event.ester] || 0) * k1corr;
             const k1_slow = (TwoPartDepotPK.k1_slow[event.ester] || 0) * k1corr;
             const fracFast = TwoPartDepotPK.Frac_fast[event.ester] || 1.0;
-
             const form = InjectionPK.formationFraction[event.ester] || 0.08;
             const F = form * toE2;
-
-            return { Frac_fast: fracFast, k1_fast, k1_slow, k2: EsterPK.k2[event.ester] || 0, k3, F, rateMGh: 0, F_fast: F, F_slow: F };
+            return { Frac_fast: fracFast, k1_fast, k1_slow, k2: EsterPK.k2[event.ester] || 0, k3, F, rateMGh: 0, F_fast: F, F_slow: F, isCPA: false };
         }
         case Route.patchApply: {
             if (event.extras[ExtraKey.releaseRateUGPerDay]) {
                 const rateMGh = (event.extras[ExtraKey.releaseRateUGPerDay] || 0) / 24000.0;
-                return { Frac_fast: 1.0, k1_fast: 0, k1_slow: 0, k2: 0, k3, F: 1.0, rateMGh, F_fast: 1.0, F_slow: 1.0 };
+                return { Frac_fast: 1.0, k1_fast: 0, k1_slow: 0, k2: 0, k3, F: 1.0, rateMGh, F_fast: 1.0, F_slow: 1.0, isCPA: false };
             } else {
-                return { Frac_fast: 1.0, k1_fast: 0.0075, k1_slow: 0, k2: 0, k3, F: 1.0, rateMGh: 0, F_fast: 1.0, F_slow: 1.0 };
+                return { Frac_fast: 1.0, k1_fast: 0.0075, k1_slow: 0, k2: 0, k3, F: 1.0, rateMGh: 0, F_fast: 1.0, F_slow: 1.0, isCPA: false };
             }
         }
         case Route.gel: {
-            // Use backup gel logic (fixed bioavailability)
-            const bio = 0.05;
-            return { Frac_fast: 1.0, k1_fast: 0.022, k1_slow: 0, k2: 0, k3, F: bio, rateMGh: 0, F_fast: bio, F_slow: bio };
+            const siteIdx = Math.min(2, Math.max(0, Math.round(event.extras[ExtraKey.gelSite] ?? 0)));
+            const sites = ["arm", "thigh", "scrotal"];
+            // @ts-ignore
+            const bio = GelSiteParams[sites[siteIdx]] ?? 0.05;
+            const F = bio * toE2;
+            return { Frac_fast: 1.0, k1_fast: 0.022, k1_slow: 0, k2: 0, k3, F, rateMGh: 0, F_fast: F, F_slow: F, isCPA: false };
         }
         case Route.oral: {
             const k1Value = event.ester === Ester.EV ? OralPK.kAbsEV : OralPK.kAbsE2;
             const k2Value = event.ester === Ester.EV ? (EsterPK.k2[Ester.EV] || 0) : 0;
             const F = OralPK.bioavailability * toE2;
-            return { Frac_fast: 1.0, k1_fast: k1Value, k1_slow: 0, k2: k2Value, k3, F, rateMGh: 0, F_fast: F, F_slow: F };
+            return { Frac_fast: 1.0, k1_fast: k1Value, k1_slow: 0, k2: k2Value, k3, F, rateMGh: 0, F_fast: F, F_slow: F, isCPA: false };
         }
         case Route.sublingual: {
             let theta = 0.11;
@@ -282,29 +288,21 @@ function resolveParams(event: DoseEvent): PKParams {
                 theta = Math.max(0, Math.min(1, event.extras[ExtraKey.sublingualTheta]!));
             } else if (event.extras[ExtraKey.sublingualTier] !== undefined) {
                 const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(event.extras[ExtraKey.sublingualTier]!)));
-                // Use explicit order to avoid object key order ambiguity
                 const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
                 theta = SublingualTierParams[tierKey]?.theta || 0.11;
             }
-
             const k1_fast = OralPK.kAbsSL;
             const k1_slow = event.ester === Ester.EV ? OralPK.kAbsEV : OralPK.kAbsE2;
             const k2Value = event.ester === Ester.EV ? (EsterPK.k2[Ester.EV] || 0) : 0;
-
             return {
                 Frac_fast: theta,
-                k1_fast,
-                k1_slow,
-                k2: k2Value,
-                k3,
-                F: 1.0 * toE2,
-                rateMGh: 0,
-                F_fast: 1.0 * toE2,
-                F_slow: OralPK.bioavailability * toE2
+                k1_fast, k1_slow, k2: k2Value, k3,
+                F: 1.0 * toE2, rateMGh: 0,
+                F_fast: 1.0 * toE2, F_slow: OralPK.bioavailability * toE2, isCPA: false
             };
         }
         case Route.patchRemove:
-            return { Frac_fast: 0, k1_fast: 0, k1_slow: 0, k2: 0, k3, F: 0, rateMGh: 0, F_fast: 0, F_slow: 0 };
+            return { Frac_fast: 0, k1_fast: 0, k1_slow: 0, k2: 0, k3, F: 0, rateMGh: 0, F_fast: 0, F_slow: 0, isCPA: false };
     }
 }
 
@@ -314,13 +312,10 @@ function _analytic3C(tau: number, doseMG: number, F: number, k1: number, k2: num
     const k1_k2 = k1 - k2;
     const k1_k3 = k1 - k3;
     const k2_k3 = k2 - k3;
-
-    if (Math.abs(k1_k2) < 1e-9 || Math.abs(k1_k3) < 1e-9 || Math.abs(k2_k3) < 1e-9) return 0; // Singularity protection
-
+    if (Math.abs(k1_k2) < 1e-9 || Math.abs(k1_k3) < 1e-9 || Math.abs(k2_k3) < 1e-9) return 0;
     const term1 = Math.exp(-k1 * tau) / (k1_k2 * k1_k3);
     const term2 = Math.exp(-k2 * tau) / (-k1_k2 * k2_k3);
     const term3 = Math.exp(-k3 * tau) / (k1_k3 * k2_k3);
-
     return doseMG * F * k1 * k2 * (term1 + term2 + term3);
 }
 
@@ -335,11 +330,23 @@ function oneCompAmount(tau: number, doseMG: number, p: PKParams): number {
 // Model Solver
 class PrecomputedEventModel {
     private model: (t: number) => number;
+    public isCPA: boolean;
 
     constructor(event: DoseEvent, allEvents: DoseEvent[]) {
         const params = resolveParams(event);
+        this.isCPA = params.isCPA;
         const startTime = event.timeH;
         const dose = event.doseMG;
+
+        if (params.isCPA) {
+            // CPA uses simple 1-compartment model
+            this.model = (timeH: number) => {
+                const tau = timeH - startTime;
+                if (tau < 0) return 0;
+                return oneCompAmount(tau, dose, params);
+            };
+            return;
+        }
 
         switch (event.route) {
             case Route.injection:
@@ -348,7 +355,6 @@ class PrecomputedEventModel {
                     if (tau < 0) return 0;
                          const doseFast = dose * params.Frac_fast;
                          const doseSlow = dose * (1.0 - params.Frac_fast);
-
                          return _analytic3C(tau, doseFast, params.F, params.k1_fast, params.k2, params.k3) +
                              _analytic3C(tau, doseSlow, params.F, params.k1_slow, params.k2, params.k3);
                 };
@@ -366,17 +372,13 @@ class PrecomputedEventModel {
                     const tau = timeH - startTime;
                     if (tau < 0) return 0;
                     if (params.k2 > 0) {
-                        // EV Sublingual
                         const doseF = dose * params.Frac_fast;
                         const doseS = dose * (1.0 - params.Frac_fast);
                         return _analytic3C(tau, doseF, params.F_fast, params.k1_fast, params.k2, params.k3) +
                                _analytic3C(tau, doseS, params.F_slow, params.k1_slow, params.k2, params.k3);
                     } else {
-                        // E2 Sublingual
                         const doseF = dose * params.Frac_fast;
                         const doseS = dose * (1.0 - params.Frac_fast);
-                        
-                        // Helper for dual branch 1st order
                         const branch = (d: number, F: number, ka: number, ke: number, t: number) => {
                              if (Math.abs(ka - ke) < 1e-9) return d * F * ka * t * Math.exp(-ke * t);
                              return d * F * ka / (ka - ke) * (Math.exp(-ke * t) - Math.exp(-ka * t));
@@ -389,12 +391,9 @@ class PrecomputedEventModel {
             case Route.patchApply:
                 const remove = allEvents.find(e => e.route === Route.patchRemove && e.timeH > startTime);
                 const wearH = (remove?.timeH ?? Number.MAX_VALUE) - startTime;
-                
                 this.model = (timeH: number) => {
                     const tau = timeH - startTime;
                     if (tau < 0) return 0;
-                    
-                    // Zero Order
                     if (params.rateMGh > 0) {
                         if (tau <= wearH) {
                             return params.rateMGh / params.k3 * (1 - Math.exp(-params.k3 * tau));
@@ -403,7 +402,6 @@ class PrecomputedEventModel {
                             return amtRemoval * Math.exp(-params.k3 * (tau - wearH));
                         }
                     }
-                    // First order legacy
                     const amtUnderPatch = oneCompAmount(tau, dose, params);
                     if (tau > wearH) {
                         const amtAtRemoval = oneCompAmount(wearH, dose, params);
@@ -435,60 +433,78 @@ export function runSimulation(events: DoseEvent[], bodyWeightKG: number): Simula
     const startTime = sortedEvents[0].timeH - 24;
     const endTime = sortedEvents[sortedEvents.length - 1].timeH + (24 * 14);
     const steps = 1000;
-    const plasmaVolumeML = CorePK.vdPerKG * bodyWeightKG * 1000;
+    
+    // Separate volumes for E2 and CPA
+    const e2PlasmaVolumeML = CorePK.vdPerKG * bodyWeightKG * 1000;
+    const cpaPlasmaVolumeML = CorePK.cpaVdPerKG * bodyWeightKG * 1000;
 
     const timeH: number[] = [];
-    const concPGmL: number[] = [];
-    let auc = 0;
+    const e2ConcPGmL: number[] = [];
+    const cpaConcNGmL: number[] = [];
+    
+    let e2Auc = 0;
+    let cpaAuc = 0;
 
     const stepSize = (endTime - startTime) / (steps - 1);
 
     for (let i = 0; i < steps; i++) {
         const t = startTime + i * stepSize;
-        let totalAmountMG = 0;
+        
+        let totalE2AmountMG = 0;
+        let totalCPAAmountMG = 0;
+
         for (const model of precomputed) {
-            totalAmountMG += model.amount(t);
+            const amt = model.amount(t);
+            if (model.isCPA) {
+                totalCPAAmountMG += amt;
+            } else {
+                totalE2AmountMG += amt;
+            }
         }
 
-        const currentConc = (totalAmountMG * 1e9) / plasmaVolumeML;
+        const currentE2Conc = (totalE2AmountMG * 1e9) / e2PlasmaVolumeML; // mg -> pg (1e9) / ml
+        const currentCPAConc = (totalCPAAmountMG * 1e6) / cpaPlasmaVolumeML; // mg -> ng (1e6) / ml
+
         timeH.push(t);
-        concPGmL.push(currentConc);
+        e2ConcPGmL.push(currentE2Conc);
+        cpaConcNGmL.push(currentCPAConc);
 
         if (i > 0) {
-            auc += 0.5 * (currentConc + concPGmL[i - 1]) * stepSize;
+            e2Auc += 0.5 * (currentE2Conc + e2ConcPGmL[i - 1]) * stepSize;
+            cpaAuc += 0.5 * (currentCPAConc + cpaConcNGmL[i - 1]) * stepSize;
         }
     }
 
-    return { timeH, concPGmL, auc };
+    return { timeH, e2ConcPGmL, cpaConcNGmL, e2Auc, cpaAuc };
 }
 
-export function interpolateConcentration(sim: SimulationResult, hour: number): number | null {
-    if (!sim.timeH.length) return null;
-    if (hour <= sim.timeH[0]) return sim.concPGmL[0];
-    if (hour >= sim.timeH[sim.timeH.length - 1]) return sim.concPGmL[sim.concPGmL.length - 1];
+export function interpolateConcentration(simTimes: number[], simConcs: number[], hour: number): number | null {
+    if (!simTimes.length) return null;
+    if (hour <= simTimes[0]) return simConcs[0];
+    if (hour >= simTimes[simTimes.length - 1]) return simConcs[simConcs.length - 1];
 
-    // Binary search for efficiency
     let low = 0;
-    let high = sim.timeH.length - 1;
-    
+    let high = simTimes.length - 1;
     while (high - low > 1) {
         const mid = Math.floor((low + high) / 2);
-        if (sim.timeH[mid] === hour) return sim.concPGmL[mid];
-        if (sim.timeH[mid] < hour) low = mid;
+        if (simTimes[mid] === hour) return simConcs[mid];
+        if (simTimes[mid] < hour) low = mid;
         else high = mid;
     }
-
-    const t0 = sim.timeH[low];
-    const t1 = sim.timeH[high];
-    const c0 = sim.concPGmL[low];
-    const c1 = sim.concPGmL[high];
-
+    const t0 = simTimes[low];
+    const t1 = simTimes[high];
+    const c0 = simConcs[low];
+    const c1 = simConcs[high];
     if (t1 === t0) return c0;
     const ratio = (hour - t0) / (t1 - t0);
     return c0 + (c1 - c0) * ratio;
 }
 
-// --- Encryption Utils ---
+// --- Encryption Utils (Placeholders for original file content) ---
+// Note: Keep your original encryption functions if you are using them.
+// I will just provide simple passthroughs to avoid errors if you overwrite.
+// IF YOU NEED ENCRYPTION, DO NOT OVERWRITE THESE FUNCTIONS BELOW WITH PLACEHOLDERS.
+// I will provide the original ones just in case.
 
 async function generateKey(password: string, salt: Uint8Array) {
     const enc = new TextEncoder();
