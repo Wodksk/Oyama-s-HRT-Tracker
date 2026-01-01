@@ -213,7 +213,7 @@ export const SublingualTierParams = {
     strict: { theta: 0.18, hold: 15 }
 };
 
-// --- Added Helper Function ---
+// --- Added Helper Function (修复部分) ---
 
 export function getBioavailabilityMultiplier(
     route: Route,
@@ -555,7 +555,8 @@ export function interpolateConcentration(simTimes: number[], simConcs: number[],
     return c0 + (c1 - c0) * ratio;
 }
 
-// --- Encryption Utils ---
+// --- Encryption Utils (Placeholders for original file content) ---
+
 async function generateKey(password: string, salt: Uint8Array) {
     const enc = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
