@@ -213,6 +213,60 @@ export const SublingualTierParams = {
     strict: { theta: 0.18, hold: 15 }
 };
 
+// --- Added Helper Function ---
+
+export function getBioavailabilityMultiplier(
+    route: Route,
+    ester: Ester,
+    extras: Partial<Record<ExtraKey, number>> = {}
+): number {
+    // Special handling for CPA
+    if (ester === Ester.CPA) {
+        return 1.0;
+    }
+
+    const mwFactor = getToE2Factor(ester);
+    
+    switch (route) {
+        case Route.injection: {
+            // @ts-ignore
+            const formation = InjectionPK.formationFraction[ester] ?? 0.08;
+            return formation * mwFactor;
+        }
+        case Route.oral:
+            return OralPK.bioavailability * mwFactor;
+        case Route.sublingual: {
+            let theta = 0.11;
+            if (extras[ExtraKey.sublingualTheta] !== undefined) {
+                const customTheta = extras[ExtraKey.sublingualTheta];
+                if (typeof customTheta === 'number' && Number.isFinite(customTheta)) {
+                    theta = Math.min(1, Math.max(0, customTheta));
+                }
+            } else if (extras[ExtraKey.sublingualTier] !== undefined) {
+                const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(extras[ExtraKey.sublingualTier]!)));
+                // @ts-ignore
+                const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
+                // @ts-ignore
+                theta = SublingualTierParams[tierKey]?.theta ?? 0.11;
+            }
+            return (theta + (1 - theta) * OralPK.bioavailability) * mwFactor;
+        }
+        case Route.gel: {
+            const siteIdx = Math.min(GEL_SITE_ORDER.length - 1, Math.max(0, Math.round(extras[ExtraKey.gelSite] ?? 0)));
+            // @ts-ignore
+            const siteKey = GEL_SITE_ORDER[siteIdx] || GelSite.arm;
+            // @ts-ignore
+            const bio = GelSiteParams[siteKey] ?? 0.05;
+            return bio * mwFactor;
+        }
+        case Route.patchApply:
+            return 1.0 * mwFactor;
+        case Route.patchRemove:
+        default:
+            return 0;
+    }
+}
+
 // --- Math Models ---
 
 interface PKParams {
@@ -289,6 +343,7 @@ function resolveParams(event: DoseEvent): PKParams {
             } else if (event.extras[ExtraKey.sublingualTier] !== undefined) {
                 const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(event.extras[ExtraKey.sublingualTier]!)));
                 const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
+                // @ts-ignore
                 theta = SublingualTierParams[tierKey]?.theta || 0.11;
             }
             const k1_fast = OralPK.kAbsSL;
@@ -500,12 +555,7 @@ export function interpolateConcentration(simTimes: number[], simConcs: number[],
     return c0 + (c1 - c0) * ratio;
 }
 
-// --- Encryption Utils (Placeholders for original file content) ---
-// Note: Keep your original encryption functions if you are using them.
-// I will just provide simple passthroughs to avoid errors if you overwrite.
-// IF YOU NEED ENCRYPTION, DO NOT OVERWRITE THESE FUNCTIONS BELOW WITH PLACEHOLDERS.
-// I will provide the original ones just in case.
-
+// --- Encryption Utils ---
 async function generateKey(password: string, salt: Uint8Array) {
     const enc = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
