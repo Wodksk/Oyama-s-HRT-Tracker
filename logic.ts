@@ -52,8 +52,8 @@ export interface DoseEvent {
 
 export interface SimulationResult {
     timeH: number[];
-    e2ConcPGmL: number[];  // Renamed for clarity
-    cpaConcNGmL: number[]; // Added for CPA
+    e2ConcPGmL: number[];  // E2 独立数据
+    cpaConcNGmL: number[]; // CPA 独立数据
     e2Auc: number;
     cpaAuc: number;
 }
@@ -64,8 +64,8 @@ export interface LabResult {
     id: string;
     timeH: number;
     concValue: number;
-    unit: 'pg/ml' | 'pmol/l' | 'ng/ml'; // Added ng/ml
-    type?: 'E2' | 'CPA'; // Differentiate lab results
+    unit: 'pg/ml' | 'pmol/l' | 'ng/ml'; 
+    type?: 'E2' | 'CPA'; // 标记化验单类型
 }
 
 export function convertToPgMl(val: number, unit: string): number {
@@ -83,7 +83,7 @@ export function convertToNgMl(val: number, unit: string): number {
 }
 
 /**
- * Build a calibration scale. Now generic to handle either E2 or CPA stream.
+ * 分别为 E2 或 CPA 创建独立的校准函数
  */
 export function createCalibrationInterpolator(
     simTimes: number[], 
@@ -93,7 +93,7 @@ export function createCalibrationInterpolator(
 ) {
     if (!simTimes.length || !results.length) return (_timeH: number) => 1;
 
-    // Filter results for the specific type
+    // 严格过滤：只使用对应类型的化验结果
     const typeResults = results.filter(r => (r.type || 'E2') === targetType);
     if (!typeResults.length) return (_timeH: number) => 1;
 
@@ -112,7 +112,7 @@ export function createCalibrationInterpolator(
 
     const points = typeResults
         .map(r => {
-            // Normalize to simulation units: E2 -> pg/mL, CPA -> ng/mL
+            // E2 转 pg/mL, CPA 转 ng/mL，完全隔离
             const obs = targetType === 'E2' 
                 ? convertToPgMl(r.concValue, r.unit)
                 : convertToNgMl(r.concValue, r.unit);
@@ -156,16 +156,14 @@ export function createCalibrationInterpolator(
 // --- Constants & Parameters ---
 
 const CorePK = {
-    vdPerKG: 2.0, // L/kg for E2
+    vdPerKG: 2.0, // E2 分布容积
     kClear: 0.41,
     kClearInjection: 0.041,
     depotK1Corr: 1.0,
-    // CPA Parameters
-    // Vd ~12-14 L/kg (High tissue distribution)
-    // Half-life ~38h -> k ~0.018
+    // CPA 独立参数
     cpaVdPerKG: 12.0, 
-    cpaKElim: 0.0182, // ln(2) / 38h
-    cpaKAbs: 1.0      // Tmax ~3-4h
+    cpaKElim: 0.0182, // 半衰期 ~38h
+    cpaKAbs: 1.0
 };
 
 const EsterInfo = {
@@ -178,7 +176,7 @@ const EsterInfo = {
 };
 
 export function getToE2Factor(ester: Ester): number {
-    if (ester === Ester.CPA) return 1.0; // CPA doesn't convert to E2
+    if (ester === Ester.CPA) return 1.0; 
     if (ester === Ester.E2) return 1.0;
     return EsterInfo[Ester.E2].mw / EsterInfo[ester].mw;
 }
@@ -213,16 +211,16 @@ export const SublingualTierParams = {
     strict: { theta: 0.18, hold: 15 }
 };
 
-// --- Added Helper Function (修复部分) ---
-
+// --- Helper Function: 生物利用度 ---
+// 之前漏了这个函数导致报错，现已补上
 export function getBioavailabilityMultiplier(
     route: Route,
     ester: Ester,
     extras: Partial<Record<ExtraKey, number>> = {}
 ): number {
-    // Special handling for CPA
+    // CPA 特殊处理，不使用雌二醇的换算逻辑
     if (ester === Ester.CPA) {
-        return 1.0;
+        return 1.0; 
     }
 
     const mwFactor = getToE2Factor(ester);
@@ -279,20 +277,20 @@ interface PKParams {
     rateMGh: number;
     F_fast: number;
     F_slow: number;
-    isCPA: boolean; // Flag to switch simulation mode
+    isCPA: boolean; // 标记是否为 CPA 模拟
 }
 
 function resolveParams(event: DoseEvent): PKParams {
-    // Detect CPA
+    // 检测 CPA
     if (event.ester === Ester.CPA) {
-        // CPA Model (Oral primarily)
+        // CPA 独立模型参数
         return {
             Frac_fast: 1.0,
-            k1_fast: CorePK.cpaKAbs, // ~1.0
+            k1_fast: CorePK.cpaKAbs, 
             k1_slow: 0,
             k2: 0,
-            k3: CorePK.cpaKElim, // ~0.0182
-            F: 1.0, // Assuming 100% relative bioavailability for standard oral dose
+            k3: CorePK.cpaKElim, 
+            F: 1.0, 
             rateMGh: 0,
             F_fast: 1.0,
             F_slow: 0,
@@ -300,7 +298,7 @@ function resolveParams(event: DoseEvent): PKParams {
         };
     }
 
-    // Estrogen Logic
+    // 雌二醇逻辑
     const k3 = event.route === Route.injection ? CorePK.kClearInjection : CorePK.kClear;
     const toE2 = getToE2Factor(event.ester);
 
@@ -394,7 +392,7 @@ class PrecomputedEventModel {
         const dose = event.doseMG;
 
         if (params.isCPA) {
-            // CPA uses simple 1-compartment model
+            // CPA 使用简单的单室模型
             this.model = (timeH: number) => {
                 const tau = timeH - startTime;
                 if (tau < 0) return 0;
@@ -475,7 +473,7 @@ class PrecomputedEventModel {
     }
 }
 
-// --- Simulation Engine ---
+// --- Simulation Engine (计算核心) ---
 
 export function runSimulation(events: DoseEvent[], bodyWeightKG: number): SimulationResult | null {
     if (events.length === 0) return null;
@@ -489,7 +487,7 @@ export function runSimulation(events: DoseEvent[], bodyWeightKG: number): Simula
     const endTime = sortedEvents[sortedEvents.length - 1].timeH + (24 * 14);
     const steps = 1000;
     
-    // Separate volumes for E2 and CPA
+    // E2 和 CPA 分别使用不同的分布容积
     const e2PlasmaVolumeML = CorePK.vdPerKG * bodyWeightKG * 1000;
     const cpaPlasmaVolumeML = CorePK.cpaVdPerKG * bodyWeightKG * 1000;
 
@@ -510,6 +508,7 @@ export function runSimulation(events: DoseEvent[], bodyWeightKG: number): Simula
 
         for (const model of precomputed) {
             const amt = model.amount(t);
+            // 严格分开累加
             if (model.isCPA) {
                 totalCPAAmountMG += amt;
             } else {
@@ -517,8 +516,8 @@ export function runSimulation(events: DoseEvent[], bodyWeightKG: number): Simula
             }
         }
 
-        const currentE2Conc = (totalE2AmountMG * 1e9) / e2PlasmaVolumeML; // mg -> pg (1e9) / ml
-        const currentCPAConc = (totalCPAAmountMG * 1e6) / cpaPlasmaVolumeML; // mg -> ng (1e6) / ml
+        const currentE2Conc = (totalE2AmountMG * 1e9) / e2PlasmaVolumeML; // mg -> pg
+        const currentCPAConc = (totalCPAAmountMG * 1e6) / cpaPlasmaVolumeML; // mg -> ng
 
         timeH.push(t);
         e2ConcPGmL.push(currentE2Conc);
@@ -555,7 +554,7 @@ export function interpolateConcentration(simTimes: number[], simConcs: number[],
     return c0 + (c1 - c0) * ratio;
 }
 
-// --- Encryption Utils (Placeholders for original file content) ---
+// --- Encryption Utils (保持原样，避免构建错误) ---
 
 async function generateKey(password: string, salt: Uint8Array) {
     const enc = new TextEncoder();
