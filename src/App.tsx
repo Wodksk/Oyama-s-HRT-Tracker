@@ -17,7 +17,6 @@ import PasswordInputModal from './components/PasswordInputModal';
 import DisclaimerModal from './components/DisclaimerModal';
 import LabResultModal from './components/LabResultModal';
 import CustomSelect from './components/CustomSelect';
-
 import flagCN from './flag_svg/🇨🇳.svg';
 import flagTW from './flag_svg/🇹🇼.svg';
 import flagHK from './flag_svg/🇭🇰.svg';
@@ -99,13 +98,12 @@ const AppContent = () => {
         return () => clearInterval(timer);
     }, []);
 
-    // Reset scroll when switching tabs
+    // Reset scroll when switching tabs to avoid carrying over deep scroll positions
     useEffect(() => {
         const el = mainScrollRef.current;
         if (el) el.scrollTo({ top: 0, behavior: 'smooth' });
     }, [currentView]);
 
-    // --- Simulation Core ---
     useEffect(() => {
         if (events.length > 0) {
             const res = runSimulation(events, weight);
@@ -115,42 +113,16 @@ const AppContent = () => {
         }
     }, [events, weight]);
 
-    // --- Dual Calibration ---
-    const { calibrationFnE2, calibrationFnCPA } = useMemo(() => {
-        if (!simulation) return { calibrationFnE2: () => 1, calibrationFnCPA: () => 1 };
-        return {
-            calibrationFnE2: createCalibrationInterpolator(simulation.timeH, simulation.e2ConcPGmL, labResults, 'E2'),
-            calibrationFnCPA: createCalibrationInterpolator(simulation.timeH, simulation.cpaConcNGmL, labResults, 'CPA')
-        };
+    const calibrationFn = useMemo(() => {
+        return createCalibrationInterpolator(simulation, labResults);
     }, [simulation, labResults]);
 
-    // --- Data Prep for Chart ---
-    const { e2Data, cpaData } = useMemo(() => {
-        if (!simulation) return { e2Data: [], cpaData: [] };
-        const e2 = simulation.timeH.map((t, i) => ({
-            time: t * 3600000,
-            conc: simulation.e2ConcPGmL[i] * calibrationFnE2(t)
-        }));
-        const cpa = simulation.timeH.map((t, i) => ({
-            time: t * 3600000,
-            conc: simulation.cpaConcNGmL[i] * calibrationFnCPA(t)
-        }));
-        return { e2Data: e2, cpaData: cpa };
-    }, [simulation, calibrationFnE2, calibrationFnCPA]);
-
-    // --- Current Levels Display ---
-    const currentLevels = useMemo(() => {
-        if (!simulation) return { e2: 0, cpa: 0 };
+    const currentLevel = useMemo(() => {
+        if (!simulation) return 0;
         const h = currentTime.getTime() / 3600000;
-        
-        const rawE2 = interpolateConcentration(simulation.timeH, simulation.e2ConcPGmL, h) || 0;
-        const rawCPA = interpolateConcentration(simulation.timeH, simulation.cpaConcNGmL, h) || 0;
-
-        return {
-            e2: rawE2 * calibrationFnE2(h),
-            cpa: rawCPA * calibrationFnCPA(h)
-        };
-    }, [simulation, currentTime, calibrationFnE2, calibrationFnCPA]);
+        const base = interpolateConcentration(simulation, h) || 0;
+        return base * calibrationFn(h);
+    }, [simulation, currentTime, calibrationFn]);
 
     const groupedEvents = useMemo(() => {
         const sorted = [...events].sort((a, b) => b.timeH - a.timeH);
@@ -172,7 +144,6 @@ const AppContent = () => {
         { id: 'settings', label: t('nav.settings'), icon: <Settings size={16} /> },
     ]), [t]);
 
-    // Import/Export Helpers
     const sanitizeImportedEvents = (raw: any): DoseEvent[] => {
         if (!Array.isArray(raw)) throw new Error('Invalid format');
         return raw
@@ -183,11 +154,7 @@ const AppContent = () => {
                 const timeNum = Number(timeH);
                 if (!Number.isFinite(timeNum)) return null;
                 const doseNum = Number(doseMG);
-                
-                // Keep CPA intact or default to E2
-                let validEster = ester;
-                if (!Object.values(Ester).includes(ester)) validEster = Ester.E2;
-
+                const validEster = Object.values(Ester).includes(ester) ? ester : Ester.E2;
                 const sanitizedExtras = (extras && typeof extras === 'object') ? extras : {};
                 return {
                     id: typeof item.id === 'string' ? item.id : uuidv4(),
@@ -206,21 +173,16 @@ const AppContent = () => {
         return raw
             .map((item: any) => {
                 if (!item || typeof item !== 'object') return null;
-                const { timeH, concValue, unit, type } = item; // Added type
+                const { timeH, concValue, unit } = item;
                 const timeNum = Number(timeH);
                 const valNum = Number(concValue);
                 if (!Number.isFinite(timeNum) || !Number.isFinite(valNum)) return null;
-                
-                // Allow ng/ml
-                const validUnit = ['pg/ml', 'pmol/l', 'ng/ml'].includes(unit) ? unit : 'pmol/l';
-                const validType = (type === 'CPA' || type === 'E2') ? type : 'E2';
-
+                const unitVal = unit === 'pg/ml' || unit === 'pmol/l' ? unit : 'pmol/l';
                 return {
                     id: typeof item.id === 'string' ? item.id : uuidv4(),
                     timeH: timeNum,
                     concValue: valNum,
-                    unit: validUnit,
-                    type: validType
+                    unit: unitVal
                 } as LabResult;
             })
             .filter((item): item is LabResult => item !== null);
@@ -264,11 +226,13 @@ const AppContent = () => {
     const importEventsFromJson = (text: string): boolean => {
         try {
             const parsed = JSON.parse(text);
+            
             if (parsed.encrypted && parsed.iv && parsed.salt && parsed.data) {
                 setPendingImportText(text);
                 setIsPasswordInputOpen(true);
                 return true; 
             }
+
             return processImportedData(parsed);
         } catch (err) {
             console.error(err);
@@ -277,10 +241,25 @@ const AppContent = () => {
         }
     };
 
-    const handleAddEvent = () => { setEditingEvent(null); setIsFormOpen(true); };
-    const handleEditEvent = (e: DoseEvent) => { setEditingEvent(e); setIsFormOpen(true); };
-    const handleAddLabResult = () => { setEditingLab(null); setIsLabModalOpen(true); };
-    const handleEditLabResult = (res: LabResult) => { setEditingLab(res); setIsLabModalOpen(true); };
+    const handleAddEvent = () => {
+        setEditingEvent(null);
+        setIsFormOpen(true);
+    };
+
+    const handleEditEvent = (e: DoseEvent) => {
+        setEditingEvent(e);
+        setIsFormOpen(true);
+    };
+
+    const handleAddLabResult = () => {
+        setEditingLab(null);
+        setIsLabModalOpen(true);
+    };
+
+    const handleEditLabResult = (res: LabResult) => {
+        setEditingLab(res);
+        setIsLabModalOpen(true);
+    };
 
     const handleDeleteLabResult = (id: string) => {
         showDialog('confirm', t('lab.delete_confirm'), () => {
@@ -298,7 +277,9 @@ const AppContent = () => {
     const handleSaveEvent = (e: DoseEvent) => {
         setEvents(prev => {
             const exists = prev.find(p => p.id === e.id);
-            if (exists) return prev.map(p => p.id === e.id ? e : p);
+            if (exists) {
+                return prev.map(p => p.id === e.id ? e : p);
+            }
             return [...prev, e];
         });
     };
@@ -393,7 +374,7 @@ const AppContent = () => {
     return (
         <div className="h-screen w-full bg-white flex flex-col font-sans text-gray-900 select-none overflow-hidden">
             <div className="flex-1 flex flex-col overflow-hidden w-full bg-white shadow-xl shadow-gray-900/10">
-                {/* Top navigation */}
+                {/* Top navigation for tablet/desktop */}
                 <div className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white sticky top-0 z-20">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl overflow-hidden border border-gray-200 bg-white">
@@ -444,55 +425,26 @@ const AppContent = () => {
                         <header className="relative px-4 md:px-8 pt-6 pb-4">
                             <div className="grid md:grid-cols-3 gap-3 md:gap-4">
                                 <div className="md:col-span-2 bg-white border border-gray-200 rounded-2xl shadow-sm px-5 py-5 flex items-start justify-between">
-                                    <div className="space-y-3 w-full">
-                                        <div className="flex justify-between items-start">
-                                            <h1 className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gray-50 text-[11px] md:text-xs font-semibold text-gray-700 border border-gray-200">
-                                                <Activity size={14} className="text-gray-500" />
-                                                {t('status.estimate')}
-                                            </h1>
-                                            <div className="text-right text-xs font-semibold text-gray-500 space-y-1 md:hidden">
-                                                <div className="px-3 py-1 rounded-lg bg-gray-50 border border-gray-200 inline-flex items-center gap-2">
-                                                    <Calendar size={14} className="text-gray-500" />
-                                                    <span className="text-xs md:text-sm">{formatDate(currentTime, lang)}</span>
-                                                </div>
-                                                <div className="font-mono text-gray-700">{formatTime(currentTime)}</div>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
-                                            {/* E2 */}
-                                            <div className="space-y-0.5">
-                                                <div className="flex items-center gap-1.5 text-pink-400">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400"></span>
-                                                    <span className="text-[10px] font-bold uppercase tracking-wider">Estradiol</span>
-                                                </div>
-                                                <div className="flex items-end gap-1.5">
-                                                    <span className="text-5xl md:text-6xl font-black text-gray-900 tracking-tight leading-none">
-                                                        {currentLevels.e2.toFixed(0)}
-                                                    </span>
-                                                    <span className="text-sm font-bold text-gray-400 mb-1.5">pg/mL</span>
-                                                </div>
-                                            </div>
-
-                                            {/* CPA (Conditional) */}
-                                            {currentLevels.cpa >= 0.1 && (
-                                                <div className="space-y-0.5">
-                                                    <div className="flex items-center gap-1.5 text-sky-400">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
-                                                        <span className="text-[10px] font-bold uppercase tracking-wider">CPA</span>
-                                                    </div>
-                                                    <div className="flex items-end gap-1.5">
-                                                        <span className="text-5xl md:text-6xl font-black text-gray-900 tracking-tight leading-none">
-                                                            {currentLevels.cpa.toFixed(1)}
-                                                        </span>
-                                                        <span className="text-sm font-bold text-gray-400 mb-1.5">ng/mL</span>
-                                                    </div>
-                                                </div>
-                                            )}
+                                    <div className="space-y-2">
+                                        <h1 className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gray-50 text-[11px] md:text-xs font-semibold text-gray-700 border border-gray-200">
+                                            <Activity size={14} className="text-gray-500" />
+                                            {t('status.estimate')}
+                                        </h1>
+                                        <div className="flex items-end gap-2">
+                                            <span className="text-6xl md:text-7xl font-black text-gray-900 tracking-tight">
+                                                {currentLevel.toFixed(0)}
+                                            </span>
+                                            <span className="text-lg md:text-xl font-bold text-gray-400">pg/mL</span>
                                         </div>
                                     </div>
+                                    <div className="text-right text-xs font-semibold text-gray-500 space-y-1 md:hidden">
+                                        <div className="px-3 py-1 rounded-lg bg-gray-50 border border-gray-200 inline-flex items-center gap-2">
+                                            <Calendar size={14} className="text-gray-500" />
+                                            <span className="text-xs md:text-sm">{formatDate(currentTime, lang)}</span>
+                                        </div>
+                                        <div className="font-mono text-gray-700">{formatTime(currentTime)}</div>
+                                    </div>
                                 </div>
-                                
                                 <div className="grid grid-cols-2 md:grid-cols-1 gap-3">
                                     <div className="flex items-center gap-3 p-4 rounded-2xl bg-white border border-gray-200 shadow-sm">
                                         <div className="w-12 h-12 rounded-xl bg-gray-50 flex items-center justify-center border border-gray-200">
@@ -508,7 +460,7 @@ const AppContent = () => {
                                         className="flex items-center gap-3 p-4 rounded-2xl bg-white border border-gray-200 shadow-sm hover:border-gray-300 transition text-left"
                                     >
                                         <div className="w-12 h-12 rounded-xl bg-gray-50 flex items-center justify-center border border-gray-200">
-                                            <Activity size={18} className="text-gray-700" />
+                                            <Settings size={18} className="text-gray-700" />
                                         </div>
                                         <div className="leading-tight">
                                             <p className="text-[11px] md:text-xs font-semibold text-gray-500">{t('status.weight')}</p>
@@ -521,21 +473,18 @@ const AppContent = () => {
                     )}
 
                     <main ref={mainScrollRef} className="flex-1 overflow-y-auto bg-white w-full scrollbar-hide px-4 py-6">
-                        {/* Chart View */}
+                        {/* Chart */}
                         {currentView === 'home' && (
                             <ResultChart 
-                                e2Data={e2Data}
-                                cpaData={cpaData}
-                                e2Events={events.filter(e => e.ester !== Ester.CPA)}
-                                cpaEvents={events.filter(e => e.ester === Ester.CPA)}
-                                labResults={labResults}
-                                calibrationFnE2={calibrationFnE2}
-                                calibrationFnCPA={calibrationFnCPA}
+                                sim={simulation} 
+                                events={events}
                                 onPointClick={handleEditEvent}
+                                labResults={labResults}
+                                calibrationFn={calibrationFn}
                             />
                         )}
 
-                        {/* Timeline (Original with slight mods for CPA) */}
+                        {/* Timeline */}
                         {currentView === 'history' && (
                             <div className="relative space-y-5 pt-6 pb-16">
                                 <div className="px-4">
@@ -572,7 +521,7 @@ const AppContent = () => {
                                                     onClick={() => handleEditEvent(ev)}
                                                     className="p-4 flex items-center gap-4 hover:bg-gray-50 transition-all cursor-pointer group relative"
                                                 >
-                                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${ev.ester === Ester.CPA ? 'bg-sky-50' : (ev.route === Route.injection ? 'bg-pink-50' : 'bg-gray-50')} border border-gray-100`}>
+                                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${ev.route === Route.injection ? 'bg-pink-50' : 'bg-gray-50'} border border-gray-100`}>
                                                         {getRouteIcon(ev.route)}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
@@ -597,7 +546,7 @@ const AppContent = () => {
                                                             {ev.route !== Route.patchRemove && !ev.extras[ExtraKey.releaseRateUGPerDay] && (
                                                                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-gray-700">
                                                                     <span>{`${t('timeline.dose_label')}: ${ev.doseMG.toFixed(2)} mg`}</span>
-                                                                    {ev.ester !== Ester.E2 && ev.ester !== Ester.CPA && (
+                                                                    {ev.ester !== Ester.E2 && (
                                                                         <span className="text-gray-500 text-[11px]">
                                                                             {`(${ (ev.doseMG * getToE2Factor(ev.ester)).toFixed(2) } mg E2)`}
                                                                         </span>
@@ -611,10 +560,11 @@ const AppContent = () => {
                                         </div>
                                     </div>
                                 ))}
+                                
                             </div>
                         )}
 
-                        {/* Lab View */}
+                        {/* Lab Calibration */}
                         {currentView === 'lab' && (
                             <div className="relative space-y-5 pt-6 pb-8">
                                 <div className="px-4">
@@ -663,13 +613,8 @@ const AppContent = () => {
                                                                     {formatTime(d)}
                                                                 </span>
                                                             </div>
-                                                            <div className="flex items-center justify-between">
-                                                                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                                                                    {formatDate(d, lang)}
-                                                                </div>
-                                                                {res.type === 'CPA' && (
-                                                                    <div className="text-[10px] font-bold text-white bg-sky-400 px-1.5 py-0.5 rounded-md">CPA</div>
-                                                                )}
+                                                            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                                                                {formatDate(d, lang)}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -677,10 +622,25 @@ const AppContent = () => {
                                             })}
                                     </div>
                                 )}
+
+                                <div className="mx-4 bg-white rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between px-4 py-3">
+                                    <div className="text-xs text-gray-500">
+                                            {t('lab.tip_scale')} ×{calibrationFn(currentTime.getTime() / 3600000).toFixed(2)}
+                                    </div>
+                                    <button
+                                        onClick={handleClearLabResults}
+                                        disabled={!labResults.length}
+                                        className={`px-3 py-2 rounded-lg text-xs font-bold transition ${
+                                            labResults.length ? 'text-red-500 hover:bg-red-50' : 'text-gray-300 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        {t('lab.clear_all')}
+                                    </button>
+                                </div>
                             </div>
                         )}
 
-                        {/* Settings View */}
+                        {/* Settings */}
                         {currentView === 'settings' && (
                             <div className="relative space-y-5 pt-6 pb-8">
                                 <div className="px-4">
@@ -823,7 +783,7 @@ const AppContent = () => {
 
                 </div>
 
-                {/* Bottom Navigation */}
+                {/* Bottom Navigation - mobile only */}
                 <nav className="px-4 pb-4 pt-2 bg-transparent z-20 safe-area-pb shrink-0 md:hidden">
                     <div className="w-full bg-white/70 backdrop-blur-lg border border-white/40 rounded-3xl px-3 py-3 flex items-center justify-between gap-2">
                         <button
