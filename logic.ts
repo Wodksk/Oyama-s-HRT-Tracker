@@ -248,33 +248,76 @@ interface PKParams {
 }
 
 function resolveParams(event: DoseEvent): PKParams {
-    // 默认的清除率是针对 E2 的 (kClear ~ 0.41)，这对 CPA 来说太快了，必须在下面覆盖它
     const defaultK3 = event.route === Route.injection ? CorePK.kClearInjection : CorePK.kClear;
     const toE2 = getToE2Factor(event.ester);
+    const extras = event.extras ?? {};
 
     switch (event.route) {
-        // ... Injection 部分保持不变 ...
+        case Route.injection: {
+            const Frac_fast = TwoPartDepotPK.Frac_fast[event.ester] ?? 0.5;
+            const k1_fast = (TwoPartDepotPK.k1_fast[event.ester] ?? 0.1) * CorePK.depotK1Corr;
+            const k1_slow = (TwoPartDepotPK.k1_slow[event.ester] ?? 0.01) * CorePK.depotK1Corr;
+            const k2 = EsterPK.k2[event.ester] ?? 0;
+            const F = getBioavailabilityMultiplier(Route.injection, event.ester, extras);
+            return { Frac_fast, k1_fast, k1_slow, k2, k3: defaultK3, F, rateMGh: 0, F_fast: F, F_slow: F };
+        }
 
-        // ... Patch 部分保持不变 ...
+        case Route.sublingual: {
+            let theta = 0.11;
+            if (extras[ExtraKey.sublingualTheta] !== undefined) {
+                const customTheta = extras[ExtraKey.sublingualTheta];
+                if (typeof customTheta === 'number' && Number.isFinite(customTheta)) {
+                    theta = Math.min(1, Math.max(0, customTheta));
+                }
+            } else if (extras[ExtraKey.sublingualTier] !== undefined) {
+                const tierRaw = extras[ExtraKey.sublingualTier];
+                if (typeof tierRaw === 'number' && Number.isFinite(tierRaw)) {
+                    const tierIdx = Math.min(SL_TIER_ORDER.length - 1, Math.max(0, Math.round(tierRaw)));
+                    const tierKey = SL_TIER_ORDER[tierIdx] || 'standard';
+                    theta = SublingualTierParams[tierKey]?.theta ?? theta;
+                }
+            }
+            const k1_fast = OralPK.kAbsSL;
+            const k1_slow = event.ester === Ester.EV ? OralPK.kAbsEV : OralPK.kAbsE2;
+            const k2 = EsterPK.k2[event.ester] ?? 0;
+            const F_fast = toE2;
+            const F_slow = OralPK.bioavailability * toE2;
+            const F = theta * F_fast + (1 - theta) * F_slow;
+            return { Frac_fast: theta, k1_fast, k1_slow, k2, k3: defaultK3, F, rateMGh: 0, F_fast, F_slow };
+        }
 
-        // ... Gel 部分保持不变 ...
+        case Route.gel: {
+            const F = getBioavailabilityMultiplier(Route.gel, event.ester, extras);
+            const k1 = 0.022;
+            return { Frac_fast: 1.0, k1_fast: k1, k1_slow: 0, k2: 0, k3: defaultK3, F, rateMGh: 0, F_fast: F, F_slow: F };
+        }
+
+        case Route.patchApply: {
+            const F = getBioavailabilityMultiplier(Route.patchApply, event.ester, extras);
+            const releaseRateUGPerDay = extras[ExtraKey.releaseRateUGPerDay];
+            const rateMGh = (typeof releaseRateUGPerDay === 'number' && Number.isFinite(releaseRateUGPerDay) && releaseRateUGPerDay > 0)
+                ? (releaseRateUGPerDay / 24 / 1000) * F
+                : 0;
+            if (rateMGh > 0) {
+                return { Frac_fast: 1.0, k1_fast: 0, k1_slow: 0, k2: 0, k3: defaultK3, F, rateMGh, F_fast: F, F_slow: F };
+            }
+            const k1 = 0.0075;
+            return { Frac_fast: 1.0, k1_fast: k1, k1_slow: 0, k2: 0, k3: defaultK3, F, rateMGh: 0, F_fast: F, F_slow: F };
+        }
+
+        case Route.patchRemove:
+            return { Frac_fast: 0, k1_fast: 0, k1_slow: 0, k2: 0, k3: defaultK3, F: 0, rateMGh: 0, F_fast: 0, F_slow: 0 };
 
         case Route.oral: {
             // === 针对 CPA 的特殊处理开始 ===
             if (event.ester === Ester.CPA) {
-                // CPA 的代谢特征：
-                // 1. 半衰期很长 (约 38-40 小时) -> k3 约为 0.017
-                // 2. 吸收较快 (3-4小时达峰) -> k1 设为 1.0
-                // 3. 生物利用度：相对于 E2 极高。
-                //    这里 F 设为 0.7 是为了补偿 Vd (分布容积) 的差异，
-                //    让 1mg/kg 的计算结果接近 CPA 的真实 ng/mL 级别。
                 return {
                     Frac_fast: 1.0,
-                    k1_fast: 1.0,  // 吸收速率
+                    k1_fast: 1.0,
                     k1_slow: 0,
                     k2: 0,
-                    k3: 0.017,     // 清除速率 (关键参数：决定了它在体内留多久)
-                    F: 0.7,        // 修正后的生物利用度
+                    k3: 0.017,
+                    F: 0.7,
                     rateMGh: 0,
                     F_fast: 0.7,
                     F_slow: 0.7
@@ -282,16 +325,13 @@ function resolveParams(event: DoseEvent): PKParams {
             }
             // === 针对 CPA 的特殊处理结束 ===
 
-            // 原有的 E2/EV 逻辑保持不变
             const k1Value = event.ester === Ester.EV ? OralPK.kAbsEV : OralPK.kAbsE2;
             const k2Value = event.ester === Ester.EV ? (EsterPK.k2[Ester.EV] || 0) : 0;
             const F = OralPK.bioavailability * toE2;
             return { Frac_fast: 1.0, k1_fast: k1Value, k1_slow: 0, k2: k2Value, k3: defaultK3, F, rateMGh: 0, F_fast: F, F_slow: F };
         }
-
-        // ... Sublingual 等其他部分保持不变 ...
     }
-    // ...
+
     return { Frac_fast: 0, k1_fast: 0, k1_slow: 0, k2: 0, k3: defaultK3, F: 0, rateMGh: 0, F_fast: 0, F_slow: 0 };
 }
 
